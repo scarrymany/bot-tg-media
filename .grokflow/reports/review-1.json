@@ -1,0 +1,68 @@
+{
+  "source": "grokflow-review",
+  "run_id": "20260902-542ec4",
+  "pass": 1,
+  "at": "2026-09-02T08:11:10.092Z",
+  "summary": "Opus review pass 1. Fixed 1 critical, 5 high and 8 medium defects. Critical: RateLimitMiddleware was attached to dp.update but type-checked Message/CallbackQuery, so rate limiting never fired in production (acceptance 13). High: stale cached file_id raised unhandled; progress edits from the yt-dlp thread could overwrite the final card; .webp thumbnails made sendVideo fail; TikTok no-watermark ranking was inverted; temp files unbounded before the size check. Medium: unguarded edit_text (\"message is not modified\"), dispatcher not re-creatable, no job ownership check in groups, double-tap double download, no overall extraction timeout, wrong-token traceback, heartbeat loop dying, ffmpeg-missing degradation. Added tests/test_regressions.py (20) and tests/test_integration.py (13, real Updates through a real Dispatcher). Suite 89 → 129, ruff + ruff format + mypy --strict clean on a fresh clone. Verified without a live token: acceptance 1, 9, 10, 12, 13, 14. Not verifiable here: 2–8, 11 (need BOT_TOKEN), 15 (no Docker), real ffmpeg paths.",
+  "findings": [
+    {
+      "severity": "low",
+      "title": "Docker container runs as root",
+      "details": "No unprivileged user in the image; not changed because Docker is unavailable locally to verify the healthcheck.",
+      "file": "Dockerfile"
+    },
+    {
+      "severity": "low",
+      "title": "Peak temp usage for merged formats is about 2x MAX_FILE_MB",
+      "details": "Per-stream cap: video and audio parts each capped independently before merge.",
+      "file": "bot/services/downloader.py"
+    },
+    {
+      "severity": "low",
+      "title": "TikTok short links cache separately from the canonical URL",
+      "details": "vm./vt.tiktok.com links are not resolved to the canonical video id before caching.",
+      "file": "bot/services/detector.py"
+    },
+    {
+      "severity": "low",
+      "title": "Instagram auth-error markers are broad",
+      "details": "Deleted/private posts may be reported as a cookies problem.",
+      "file": "bot/services/extractor.py"
+    },
+    {
+      "severity": "low",
+      "title": "Graceful shutdown does not wait for in-flight uploads",
+      "details": "Only downloads are counted in wait_idle(); a sendVideo in progress can be cut on SIGTERM.",
+      "file": "bot/main.py"
+    },
+    {
+      "severity": "low",
+      "title": "A failed ffmpeg merge can yield a silent video",
+      "details": "_find_output prefers video-only leftovers if a merge fails.",
+      "file": "bot/services/downloader.py"
+    },
+    {
+      "severity": "low",
+      "title": "Acceptance items 2-8, 11 and 15 unverified locally",
+      "details": "Need a live BOT_TOKEN, Docker and ffmpeg; items 4, 6, 7, 8, 11 touch the changed code paths and deserve attention in the live test.",
+      "file": ".grokflow/acceptance.md"
+    }
+  ],
+  "fixed": [
+    "Rate limiting never fired: middleware on dp.update received Update, not Message; added unwrap_event() and dispatcher-level test",
+    "Stale/revoked cached file_id no longer raises; dead row dropped and real download performed",
+    "Progress callbacks can no longer overwrite the final result card (progress_open guard)",
+    "YouTube .webp thumbnails: filter to compliant JPEG, convert when ffmpeg present, retry sendVideo without thumbnail",
+    "TikTok watermark ranking fixed (lexicographic: clean, yt-dlp preference, height/bitrate) and detection matches real yt-dlp labels",
+    "Temp files bounded: progress hook aborts past the cap, max_filesize passed to yt-dlp",
+    "safe_edit() wraps all message edits; 'message is not modified' no longer unhandled in /settings and links",
+    "Handlers expose build_router() so create_dispatcher() can be called more than once",
+    "Job ownership check: foreign users cannot drive another user's card",
+    "Double-tap protection via per-job busy claim",
+    "60 s overall timeout on metadata extraction",
+    "Wrong BOT_TOKEN prints a clear message and exits 2",
+    "Heartbeat loop survives write errors",
+    "ffmpeg missing: FfmpegMissingError with ru/en message and progressive-stream fallback",
+    "Rate-limit deque GC and math.ceil wait time"
+  ]
+}
