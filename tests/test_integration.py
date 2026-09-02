@@ -117,6 +117,10 @@ def _info() -> MediaInfo:
             FormatOption("1080", "1080p", "137+140", 90_000_000, True, True, 1080, 1920),
             FormatOption("audio", "mp3", "bestaudio/best", 1_000, True, False),
         ],
+        # As yt-dlp resolves it; the file_id cache is keyed on this identity,
+        # not on the URL shape the user happened to send.
+        media_id="dQw4w9WgXcQ",
+        extractor="youtube",
     )
 
 
@@ -219,7 +223,8 @@ async def test_cache_hit_sends_without_downloading(
         return info
 
     monkeypatch.setattr("bot.handlers.links.extract_media", fake_extract)
-    await put_cached(info.normalised_url, "360", "cached-file-id", "video")
+    await put_cached(info.cache_key, "360", "cached-file-id", "video")
+    assert info.cache_key == "youtube:dQw4w9WgXcQ"
 
     called = {"n": 0}
 

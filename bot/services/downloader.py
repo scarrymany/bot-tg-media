@@ -379,7 +379,8 @@ class Downloader:
             )
             path = _find_output(workdir, kind)
             if kind == "video" and option.has_audio:
-                assert_playable_video(path)
+                # ffprobe is a subprocess: keep it off the event loop.
+                await loop.run_in_executor(None, assert_playable_video, path)
             size = path.stat().st_size
             if size > max_bytes:
                 raise FileTooLargeError("downloaded file exceeds limit")
