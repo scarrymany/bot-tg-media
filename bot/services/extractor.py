@@ -168,21 +168,45 @@ def _fmt_size(fmt: dict[str, Any]) -> int | None:
     return None
 
 
-def _tiktok_score(fmt: dict[str, Any]) -> int:
-    blob = " ".join(
+_NO_WATERMARK_TOKENS = ("no-watermark", "no_watermark", "nowatermark", "without watermark")
+
+
+def _format_blob(fmt: dict[str, Any]) -> str:
+    return " ".join(
         str(fmt.get(key) or "") for key in ("format_id", "format_note", "format", "protocol")
     ).lower()
-    score = 0
-    if any(token in blob for token in ("no-watermark", "no_watermark", "nowatermark")):
-        score += 300
-    elif "watermark" in blob:
-        score -= 300
-    if "download" in blob:
-        score += 80
-    tbr = fmt.get("tbr")
-    if isinstance(tbr, (int, float)):
-        score += int(tbr)
-    return score
+
+
+def is_watermarked(fmt: dict[str, Any]) -> bool:
+    """Whether yt-dlp labelled this TikTok format as carrying a watermark.
+
+    yt-dlp marks the watermarked stream with a ``watermarked`` format note (see
+    its ``download_addr`` / ``download`` formats) and leaves the clean
+    ``play_addr`` stream unlabelled — it never emits a "no-watermark" token, so
+    absence of the marker is what identifies the clean stream.
+    """
+    blob = _format_blob(fmt)
+    if any(token in blob for token in _NO_WATERMARK_TOKENS):
+        return False
+    return "watermark" in blob
+
+
+def _preference(fmt: dict[str, Any]) -> int:
+    value = fmt.get("preference")
+    if isinstance(value, (int, float)) and -1e6 < value < 1e6:
+        return int(value)
+    return 0
+
+
+def tiktok_rank(fmt: dict[str, Any]) -> tuple[int, int]:
+    """Rank a TikTok format: watermark-free first, then yt-dlp's own preference.
+
+    Compared lexicographically rather than summed into a single score: bitrates
+    run into the thousands, so any additive watermark penalty was swamped and a
+    high-bitrate watermarked stream could beat the clean one.
+    """
+    clean = 0 if is_watermarked(fmt) else 1
+    return (clean, _preference(fmt))
 
 
 def _bucket(height: int) -> int:
@@ -237,12 +261,16 @@ def build_format_options(
         if not candidates:
             continue
 
-        def score(fmt: dict[str, Any], *, _step: int = step) -> tuple[int, int, int]:
+        def score(
+            fmt: dict[str, Any], *, _step: int = step
+        ) -> tuple[int, tuple[int, int], int, int]:
             combined = 1 if _is_audio(fmt) else 0
-            nw = _tiktok_score(fmt) if platform == "tiktok" else 0
+            rank = tiktok_rank(fmt) if platform == "tiktok" else (0, 0)
             # Prefer the format whose height is closest to the bucket from below.
             closeness = int(fmt.get("height") or 0)
-            return (combined, nw, closeness)
+            tbr = fmt.get("tbr")
+            bitrate = int(tbr) if isinstance(tbr, (int, float)) else 0
+            return (combined, rank, closeness, bitrate)
 
         best = max(candidates, key=score)
         combined = _is_audio(best)

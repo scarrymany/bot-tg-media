@@ -9,6 +9,8 @@ from bot.services.extractor import (
     InstagramCookiesError,
     build_format_options,
     extract_media,
+    is_watermarked,
+    tiktok_rank,
 )
 
 MAX_BYTES = 50 * 1024 * 1024
@@ -100,6 +102,75 @@ def test_tiktok_prefers_no_watermark() -> None:
     options = build_format_options(TIKTOK_INFO, max_file_bytes=MAX_BYTES, platform="tiktok")
     video = next(opt for opt in options if opt.key == "720")
     assert video.format_selector == "download"
+
+
+# The shapes below mirror what yt-dlp's TikTok extractor really emits: the clean
+# stream is `play_addr` / `play` with no watermark wording at all, and the
+# watermarked one is `download_addr` / `download` carrying a "watermarked" note
+# plus a negative preference.
+TIKTOK_REAL_INFO: dict = {
+    "title": "dance",
+    "duration": 8,
+    "formats": [
+        {
+            "format_id": "download_addr-0",
+            "format_note": "Download video, watermarked (API)",
+            "height": 720,
+            "width": 720,
+            "vcodec": "h264",
+            "acodec": "aac",
+            "tbr": 2600,
+            "filesize": 4_000_000,
+            "preference": -2,
+        },
+        {
+            "format_id": "play_addr-0",
+            "format_note": "Direct video (API)",
+            "height": 720,
+            "width": 720,
+            "vcodec": "h264",
+            "acodec": "aac",
+            "tbr": 1100,
+            "filesize": 3_500_000,
+        },
+    ],
+}
+
+
+def test_tiktok_watermark_beats_a_higher_bitrate() -> None:
+    """Regression: the watermark penalty used to be summed with the bitrate, so
+    a watermarked 2600 kbps stream outranked the clean 1100 kbps one."""
+    options = build_format_options(TIKTOK_REAL_INFO, max_file_bytes=MAX_BYTES, platform="tiktok")
+    video = next(opt for opt in options if opt.key == "720")
+    assert video.format_selector == "play_addr-0"
+
+
+def test_tiktok_watermark_detection_matches_ytdlp_labels() -> None:
+    assert is_watermarked(
+        {"format_id": "download_addr", "format_note": "Download video, watermarked"}
+    )
+    assert is_watermarked({"format_id": "download", "format_note": "watermarked"})
+    assert not is_watermarked({"format_id": "play_addr", "format_note": "Direct video"})
+    assert not is_watermarked({"format_id": "download_addr", "format_note": "Download video"})
+    assert not is_watermarked({"format_id": "h264_540p", "format_note": "no-watermark"})
+
+
+def test_tiktok_rank_orders_clean_then_preference() -> None:
+    clean_play = {"format_id": "play_addr", "format_note": "Direct video"}
+    clean_dl = {"format_id": "download_addr", "format_note": "Download video", "preference": -1}
+    dirty = {"format_id": "download_addr", "format_note": "Download video, watermarked"}
+    assert tiktok_rank(clean_play) > tiktok_rank(clean_dl) > tiktok_rank(dirty)
+
+
+def test_tiktok_rank_survives_infinite_preference() -> None:
+    assert tiktok_rank({"format_id": "play_addr", "preference": float("-inf")}) == (1, 0)
+
+
+def test_non_tiktok_platforms_ignore_the_watermark_rank() -> None:
+    """A YouTube format id containing "download" must not shuffle the ordering."""
+    options = build_format_options(FAKE_INFO, max_file_bytes=MAX_BYTES, platform="youtube")
+    by_key = {opt.key: opt for opt in options}
+    assert by_key["720"].format_selector == "22"
 
 
 async def test_extract_media_mocked(monkeypatch: pytest.MonkeyPatch) -> None:
