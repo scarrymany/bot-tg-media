@@ -18,6 +18,7 @@ from bot.middlewares.concurrency import ConcurrencyMiddleware
 from bot.middlewares.logging import LoggingMiddleware
 from bot.middlewares.rate_limit import RateLimitMiddleware
 from bot.services.downloader import Downloader
+from bot.storage.db import close_db, init_db
 
 log = structlog.get_logger("bot")
 
@@ -55,7 +56,7 @@ def create_dispatcher(settings: Settings) -> Dispatcher:
     dp["settings"] = settings
     dp["downloader"] = Downloader(settings)
     dp.update.outer_middleware(LoggingMiddleware())
-    dp.update.outer_middleware(RateLimitMiddleware())
+    dp.update.outer_middleware(RateLimitMiddleware(settings.rate_limit_per_min))
     dp.update.outer_middleware(ConcurrencyMiddleware(settings.max_concurrent_downloads))
     dp.include_router(setup_routers())
     return dp
@@ -84,11 +85,20 @@ async def run(settings: Settings | None = None) -> None:
     dp = create_dispatcher(settings)
     stop = asyncio.Event()
 
+    async def on_startup() -> None:
+        await init_db(settings.db_path)
+        log.info("startup")
+
     async def on_shutdown() -> None:
         stop.set()
+        downloader = dp.workflow_data.get("downloader")
+        if isinstance(downloader, Downloader):
+            await downloader.wait_idle(timeout=30)
+        await close_db()
         log.info("shutdown")
         await bot.session.close()
 
+    dp.startup.register(on_startup)
     dp.shutdown.register(on_shutdown)
     heartbeat_task = asyncio.create_task(
         _heartbeat_loop(str(settings.heartbeat_path), stop),

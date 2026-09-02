@@ -6,24 +6,25 @@ from aiogram.types import Message
 
 from bot.config import get_settings
 from bot.i18n import t
+from bot.storage.users import get_user
 
 router = Router(name="start")
 
 
-def _lang(message: Message) -> str:
-    user_lang = getattr(message, "user_lang", None)
-    if isinstance(user_lang, str) and user_lang in {"ru", "en"}:
-        return user_lang
-    return get_settings().default_lang
+async def _lang(message: Message) -> str:
+    settings = get_settings()
+    user_id = message.from_user.id if message.from_user else 0
+    user = await get_user(user_id, settings.default_lang)
+    return user.lang
 
 
 @router.message(CommandStart())
 async def cmd_start(message: Message) -> None:
-    await message.answer(t("start_greeting", _lang(message)))
+    await message.answer(t("start_greeting", await _lang(message)))
 
 
 @router.message(Command("help"))
 async def cmd_help(message: Message) -> None:
     await message.answer(
-        t("help_text", _lang(message), max_mb=get_settings().max_file_mb),
+        t("help_text", await _lang(message), max_mb=get_settings().max_file_mb),
     )

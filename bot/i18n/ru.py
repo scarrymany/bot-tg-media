@@ -47,7 +47,7 @@ STRINGS: dict[str, str] = {
     "err_generic": "Что-то пошло не так. Попробуйте ещё раз.",
     "err_no_formats": "Не нашёл подходящих форматов для этого видео.",
     "rate_limited": "Слишком часто. Подождите {seconds} с и попробуйте снова.",
-    "settings_title": "Настройки\n\nКачество по умолчанию: {quality}\nЯзык: {lang}",
+    "settings_title": "Настройки\n\nКачество по умолчанию: {quality}\nЯзык: {language}",
     "settings_quality_title": "Качество по умолчанию",
     "settings_lang_title": "Язык интерфейса",
     "quality_auto": "Авто",
@@ -58,6 +58,7 @@ STRINGS: dict[str, str] = {
     "lang_ru": "Русский",
     "lang_en": "English",
     "settings_saved": "Сохранено.",
+    "btn_back": "← Назад",
     "stats_text": (
         "📊 Статистика\n\n"
         "Пользователи: {users}\n"

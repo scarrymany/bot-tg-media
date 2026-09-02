@@ -9,7 +9,8 @@ from aiogram import Bot
 from aiogram.client.session.base import BaseSession
 from aiogram.methods import TelegramMethod
 from aiogram.types import Audio, CallbackQuery, Chat, Message, User, Video
-from bot.config import reset_settings_cache
+from bot.config import get_settings, reset_settings_cache
+from bot.storage.db import close_db, init_db
 
 
 class MockedSession(BaseSession):
@@ -83,6 +84,13 @@ def env_settings(monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -> Iterator[Non
     reset_settings_cache()
     yield
     reset_settings_cache()
+
+
+@pytest.fixture
+async def db(env_settings: None) -> Any:
+    await init_db(get_settings().db_path)
+    yield
+    await close_db()
 
 
 @pytest.fixture

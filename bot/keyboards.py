@@ -77,3 +77,31 @@ def settings_root_keyboard(lang: str) -> InlineKeyboardMarkup:
     builder.button(text=t("settings_lang_title", lang), callback_data=SettingsCb(a="lmenu"))
     builder.adjust(1)
     return builder.as_markup()
+
+
+def quality_keyboard(lang: str, current: str) -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    for quality in ("auto", "360", "480", "720", "1080"):
+        label = t(f"quality_{quality}", lang)
+        if quality == current:
+            label = f"✅ {label}"
+        builder.button(text=label, callback_data=SettingsCb(a="qual", v=quality))
+    builder.adjust(1)
+    builder.row(
+        InlineKeyboardButton(text=t("btn_back", lang), callback_data=SettingsCb(a="back").pack())
+    )
+    return builder.as_markup()
+
+
+def language_keyboard(lang: str, current: str) -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    for code in ("ru", "en"):
+        label = t(f"lang_{code}", lang)
+        if code == current:
+            label = f"✅ {label}"
+        builder.button(text=label, callback_data=SettingsCb(a="lang", v=code))
+    builder.adjust(1)
+    builder.row(
+        InlineKeyboardButton(text=t("btn_back", lang), callback_data=SettingsCb(a="back").pack())
+    )
+    return builder.as_markup()

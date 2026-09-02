@@ -24,9 +24,9 @@ from bot.services.downloader import (
     FileTooLargeError,
     map_error_key,
 )
-from bot.services.sender import send_media
-from bot.storage.cache import cancel_job, get_job
-from bot.storage.users import get_user
+from bot.services.sender import send_by_file_id, send_media
+from bot.storage.cache import cancel_job, get_cached, get_job, put_cached
+from bot.storage.users import get_user, record_event
 
 router = Router(name="callbacks")
 log = structlog.get_logger("callbacks")
@@ -85,6 +85,29 @@ async def on_format(
         )
         return
 
+    if message is None:
+        return
+
+    cached = await get_cached(job.info.normalised_url, option.key)
+    if cached is not None:
+        await send_by_file_id(
+            callback.bot,
+            message.chat.id,
+            cached.file_id,
+            cached.kind,
+            title=job.info.title,
+            performer=job.info.uploader or job.info.title,
+            duration=job.info.duration,
+        )
+        await record_event(user_id, job.info.platform, "cache_hit")
+        log.info("sent", kind=cached.kind, cached=True)
+        await _safe_edit(
+            message,
+            t("download_done", lang, title=escape(job.info.title)[:200]),
+            reply_markup=another_keyboard(job.token, lang),
+        )
+        return
+
     await _safe_edit(message, t("downloading", lang, pct=0))
 
     async def progress(pct: int) -> None:
@@ -100,9 +123,10 @@ async def on_format(
                 progress=progress,
                 cancel_event=job.cancel_event,
             )
-        if message is None:
-            return
         sent = await send_media(callback.bot, message.chat.id, result)
+        if sent.file_id:
+            await put_cached(job.info.normalised_url, option.key, sent.file_id, sent.kind)
+        await record_event(user_id, job.info.platform, "download")
         log.info("sent", kind=sent.kind, cached=False)
         await _safe_edit(
             message,

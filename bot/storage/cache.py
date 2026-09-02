@@ -2,10 +2,13 @@ from __future__ import annotations
 
 import asyncio
 import secrets
+import time
 from dataclasses import dataclass, field
 from time import monotonic
+from typing import Literal
 
 from bot.services.extractor import MediaInfo
+from bot.storage.db import get_db_or_none
 
 JOB_TTL_SEC = 60 * 60
 
@@ -58,3 +61,46 @@ def drop_job(token: str) -> None:
 
 def clear_jobs() -> None:
     _JOBS.clear()
+
+
+@dataclass(frozen=True, slots=True)
+class CacheEntry:
+    file_id: str
+    kind: Literal["video", "audio"]
+    created_at: int
+
+
+async def get_cached(url_norm: str, format_key: str) -> CacheEntry | None:
+    conn = get_db_or_none()
+    if conn is None:
+        return None
+    cur = await conn.execute(
+        "SELECT file_id, kind, created_at FROM media_cache WHERE url_norm = ? AND format_key = ?",
+        (url_norm, format_key),
+    )
+    row = await cur.fetchone()
+    if row is None:
+        return None
+    kind = row["kind"]
+    if kind not in {"video", "audio"}:
+        return None
+    return CacheEntry(file_id=str(row["file_id"]), kind=kind, created_at=int(row["created_at"]))
+
+
+async def put_cached(
+    url_norm: str,
+    format_key: str,
+    file_id: str,
+    kind: Literal["video", "audio"],
+) -> None:
+    conn = get_db_or_none()
+    if conn is None:
+        return
+    await conn.execute(
+        "INSERT INTO media_cache (url_norm, format_key, file_id, kind, created_at) "
+        "VALUES (?, ?, ?, ?, ?) "
+        "ON CONFLICT(url_norm, format_key) DO UPDATE SET "
+        "file_id = excluded.file_id, kind = excluded.kind, created_at = excluded.created_at",
+        (url_norm, format_key, file_id, kind, int(time.time())),
+    )
+    await conn.commit()

@@ -11,7 +11,7 @@ from bot.i18n import t
 from bot.keyboards import AnotherCb, CancelCb, FormatCb
 from bot.services.downloader import DownloadError, DownloadResult, FileTooLargeError
 from bot.services.extractor import FormatOption, MediaInfo
-from bot.storage.cache import clear_jobs, put_job
+from bot.storage.cache import clear_jobs, put_cached, put_job
 
 from tests.conftest import make_callback, make_message
 
@@ -182,6 +182,27 @@ async def test_another_format_restores_keyboard(
     texts = [b.text for row in markup.inline_keyboard for b in row]
     assert any("360p" in text for text in texts)
     assert t("btn_cancel", "ru") in texts
+
+
+async def test_second_request_uses_file_id_cache(
+    mocked_bot: tuple[Bot, object], db: None, tmp_path: Path
+) -> None:
+    bot, session = mocked_bot  # type: ignore[misc]
+    clear_jobs()
+    info = _info()
+    token = put_job(info, 42)
+    await put_cached(info.normalised_url, "360", "cached-file-id", "video")
+    fake = FakeDownloader(tmp_path)
+    await on_format(
+        make_callback(FormatCb(t=token, k="360").pack(), bot=bot),
+        FormatCb(t=token, k="360"),
+        settings=get_settings(),
+        downloader=fake,  # type: ignore[arg-type]
+        download_sem=asyncio.Semaphore(1),
+    )
+    assert fake.called == 0
+    video = next(r for r in session.requests if isinstance(r, SendVideo))  # type: ignore[attr-defined]
+    assert video.video == "cached-file-id"
 
 
 def test_make_message_helper_smoke() -> None:
