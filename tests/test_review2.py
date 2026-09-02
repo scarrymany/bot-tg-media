@@ -463,3 +463,48 @@ def test_progress_hook_allows_parts_that_fit_together() -> None:
         hook({"status": "finished", "total_bytes": 30})
     finally:
         loop.close()
+
+
+# --------------------------------------------------------------------------
+# Dockerfile: unprivileged user with a writable /data
+# --------------------------------------------------------------------------
+
+
+def _repo_root() -> Path:
+    return Path(__file__).resolve().parent.parent
+
+
+def test_dockerfile_runs_unprivileged_with_a_writable_data_dir() -> None:
+    """Docker seeds a fresh named volume from the image directory, ownership
+    included - but only what exists at the time VOLUME is declared. Getting the
+    order wrong yields a root-owned /data that the app user cannot write, and
+    that cannot be verified without a Docker daemon, hence this check."""
+    lines = [
+        line.strip()
+        for line in (_repo_root() / "Dockerfile").read_text(encoding="utf-8").splitlines()
+        if line.strip() and not line.strip().startswith("#")
+    ]
+    index = {}
+    for position, line in enumerate(lines):
+        if line.startswith("RUN useradd"):
+            index["useradd"] = position
+        elif line.startswith("RUN mkdir -p /data") and "chown" in line:
+            index["chown"] = position
+        elif line.startswith("VOLUME"):
+            index["volume"] = position
+        elif line.startswith("USER "):
+            index["user"] = position
+        elif line.startswith("CMD"):
+            index["cmd"] = position
+    assert set(index) == {"useradd", "chown", "volume", "user", "cmd"}, index
+    assert index["useradd"] < index["chown"] < index["volume"], "chown must precede VOLUME"
+    assert index["volume"] < index["user"] < index["cmd"]
+    assert lines[index["user"]] == "USER app"
+
+
+def test_compose_healthcheck_is_unchanged_and_needs_no_write_access() -> None:
+    compose = (_repo_root() / "docker-compose.yml").read_text(encoding="utf-8")
+    assert "HEARTBEAT_PATH: /tmp/bot-heartbeat" in compose
+    # The check only reads an mtime, so it works for a non-root user too.
+    assert "os.path.getmtime(p)" in compose
+    assert "start_period: 40s" in compose

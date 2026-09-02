@@ -72,10 +72,10 @@ docker compose up -d --build
 docker compose ps      # healthcheck → healthy после старта (~40 с start_period)
 ```
 
-- Образ: `python:3.12-slim` + ffmpeg.
+- Образ: `python:3.12-slim` + ffmpeg, процесс работает от непривилегированного пользователя `app` (uid 10001).
 - Volume `bot-data` → `/data` (`DB_PATH=/data/bot.db`, `DOWNLOAD_DIR=/data/downloads`).
 - Healthcheck: mtime `HEARTBEAT_PATH` свежее 90 секунд (процесс пишет файл каждые 30 с).
-- `SIGINT`/`SIGTERM`: стоп polling, ждёт in-flight download (до 30 с), закрывает SQLite.
+- `SIGINT`/`SIGTERM`: стоп polling, ждёт in-flight download **и** отправку файла в Telegram (до 30 с), закрывает SQLite.
 
 Логи: `docker compose logs -f bot`.
 
@@ -92,7 +92,9 @@ docker compose ps      # healthcheck → healthy после старта (~40 с
 | нет звука / нет mp3 | `ffmpeg -version`; в контейнере ffmpeg уже есть. Без ffmpeg mp3 недоступен (бот скажет об этом), а видео скачивается готовым потоком без склейки |
 | rate limit | `RATE_LIMIT_PER_MIN`, подожди указанное число секунд |
 | healthcheck unhealthy | контейнер должен прожить `start_period`; нет `BOT_TOKEN` → процесс сразу умирает |
-| повтор качает заново | тот же нормализованный URL + тот же `format_key`; кэш в SQLite |
+| повтор качает заново | ключ кэша — id видео от yt-dlp + `format_key`, поэтому короткая ссылка (`vm.tiktok.com/...`) и каноническая делят одну запись; кэш в SQLite |
+| `permission denied` на `/data` | том `bot-data` создан старым root-образом. `docker compose down` и `docker volume rm <project>_bot-data` (данные теряются) или `docker run --rm -v <project>_bot-data:/data alpine chown -R 10001:10001 /data` |
+| видео без звука | бот проверяет результат мержа и вместо немого файла отвечает ошибкой — проверь `ffmpeg -version` и логи |
 
 ## Tests / lint
 
