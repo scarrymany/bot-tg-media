@@ -42,7 +42,7 @@ class MockedSession(BaseSession):
                 date=datetime.now(UTC),
                 chat=Chat(id=int(chat_id) if chat_id is not None else 1, type="private"),
                 text=text,
-            )
+            ).as_(bot)
         return True
 
 
