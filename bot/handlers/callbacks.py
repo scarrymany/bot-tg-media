@@ -5,10 +5,11 @@ from html import escape
 
 import structlog
 from aiogram import Bot, Router
-from aiogram.exceptions import TelegramAPIError, TelegramBadRequest
-from aiogram.types import CallbackQuery, InlineKeyboardMarkup, Message
+from aiogram.exceptions import TelegramAPIError
+from aiogram.types import CallbackQuery, Message
 
 from bot.config import Settings, get_settings
+from bot.handlers.common import safe_edit
 from bot.handlers.links import render_card
 from bot.i18n import t
 from bot.keyboards import (
@@ -39,23 +40,6 @@ from bot.storage.cache import (
 from bot.storage.users import get_user, record_event
 
 log = structlog.get_logger("callbacks")
-
-
-async def _safe_edit(
-    message: Message | None,
-    text: str,
-    reply_markup: InlineKeyboardMarkup | None = None,
-) -> None:
-    if message is None:
-        return
-    try:
-        await message.edit_text(text, reply_markup=reply_markup)
-    except TelegramBadRequest as exc:
-        if "not modified" in str(exc).lower():
-            return
-        log.warning("edit_failed", error=str(exc))
-    except TelegramAPIError as exc:
-        log.warning("edit_failed", error=str(exc))
 
 
 def _bot_of(callback: CallbackQuery) -> Bot | None:
@@ -98,16 +82,16 @@ async def on_format(
     lang = await _lang_for(user_id)
     message = callback.message if isinstance(callback.message, Message) else None
     if job is None or job.cancelled:
-        await _safe_edit(message, t("err_generic", lang))
+        await safe_edit(message, t("err_generic", lang))
         return
 
     option = job.info.format_by_key(callback_data.k)
     if option is None:
-        await _safe_edit(message, t("err_no_formats", lang))
+        await safe_edit(message, t("err_no_formats", lang))
         return
 
     if option.exceeds_limit:
-        await _safe_edit(
+        await safe_edit(
             message,
             t("err_too_large", lang, max_mb=settings.max_file_mb),
             reply_markup=formats_keyboard(
@@ -177,7 +161,7 @@ async def _try_cached(
         return False
     await record_event(user_id, job.info.platform, "cache_hit")
     log.info("sent", kind=cached.kind, cached=True)
-    await _safe_edit(
+    await safe_edit(
         message,
         t("download_done", lang, title=escape(job.info.title)[:200]),
         reply_markup=another_keyboard(job.token, lang),
@@ -200,7 +184,7 @@ async def _run_job(
     if await _try_cached(bot, message, job, option.key, lang, user_id):
         return
 
-    await _safe_edit(message, t("downloading", lang, pct=0))
+    await safe_edit(message, t("downloading", lang, pct=0))
 
     # Progress updates are scheduled from the yt-dlp worker thread and can land
     # after the final card is drawn; this flag drops the stale ones so the
@@ -210,7 +194,7 @@ async def _run_job(
     async def progress(pct: int) -> None:
         if not progress_open:
             return
-        await _safe_edit(message, t("downloading", lang, pct=pct))
+        await safe_edit(message, t("downloading", lang, pct=pct))
 
     sem = download_sem or asyncio.Semaphore(settings.max_concurrent_downloads)
     result = None
@@ -228,17 +212,17 @@ async def _run_job(
             await put_cached(job.info.normalised_url, option.key, sent.file_id, sent.kind)
         await record_event(user_id, job.info.platform, "download")
         log.info("sent", kind=sent.kind, cached=False)
-        await _safe_edit(
+        await safe_edit(
             message,
             t("download_done", lang, title=escape(job.info.title)[:200]),
             reply_markup=another_keyboard(job.token, lang),
         )
     except DownloadCancelled:
         progress_open = False
-        await _safe_edit(message, t("cancelled", lang))
+        await safe_edit(message, t("cancelled", lang))
     except FileTooLargeError:
         progress_open = False
-        await _safe_edit(
+        await safe_edit(
             message,
             t("err_too_large", lang, max_mb=settings.max_file_mb),
             reply_markup=formats_keyboard(
@@ -252,7 +236,7 @@ async def _run_job(
     except Exception as exc:
         progress_open = False
         log.exception("download_or_send_failed")
-        await _safe_edit(message, t(map_error_key(exc), lang, max_mb=settings.max_file_mb))
+        await safe_edit(message, t(map_error_key(exc), lang, max_mb=settings.max_file_mb))
     finally:
         progress_open = False
         if result is not None:
@@ -269,7 +253,7 @@ async def on_cancel(callback: CallbackQuery, callback_data: CancelCb) -> None:
     lang = await _lang_for(user_id)
     cancel_job(callback_data.t)
     message = callback.message if isinstance(callback.message, Message) else None
-    await _safe_edit(message, t("cancelled", lang))
+    await safe_edit(message, t("cancelled", lang))
 
 
 async def on_another(
@@ -286,10 +270,10 @@ async def on_another(
     lang = await _lang_for(user_id)
     message = callback.message if isinstance(callback.message, Message) else None
     if job is None:
-        await _safe_edit(message, t("err_generic", lang))
+        await safe_edit(message, t("err_generic", lang))
         return
     user = await get_user(user_id, settings.default_lang)
-    await _safe_edit(
+    await safe_edit(
         message,
         render_card(job.info, lang),
         reply_markup=formats_keyboard(

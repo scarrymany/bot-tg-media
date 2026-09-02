@@ -487,5 +487,90 @@ async def test_merged_selector_degrades_without_ffmpeg(
     assert "height<=720" in captured["format_selector"]
 
 
+# --------------------------------------------------------------------------
+# "message is not modified" and other edit failures
+# --------------------------------------------------------------------------
+
+
+class EditHostileSession(MockedSession):
+    """Rejects every editMessageText, the way Telegram does for an identical body."""
+
+    def __init__(self, message: str = "Bad Request: message is not modified") -> None:
+        super().__init__()
+        self.failure = message
+
+    async def make_request(
+        self,
+        bot: Bot,
+        method: TelegramMethod[Any],
+        timeout: int | None = None,
+    ) -> Any:
+        if type(method).__name__ == "EditMessageText":
+            self.requests.append(method)
+            raise TelegramBadRequest(method=method, message=self.failure)
+        return await super().make_request(bot, method, timeout)
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        "Bad Request: message is not modified",
+        "Bad Request: message to edit not found",
+    ],
+)
+async def test_settings_survives_a_failing_edit(env_settings: None, db: None, failure: str) -> None:
+    """Regression: /settings edited messages unguarded, so re-picking the
+    quality you already have raised an unhandled 'message is not modified'."""
+    from bot.handlers.settings import on_settings
+    from bot.keyboards import SettingsCb
+
+    session = EditHostileSession(failure)
+    bot = Bot(token="123456:TESTTOKEN-scaffold", session=session)
+    for action, value in (("qual", "720"), ("lang", "ru"), ("qmenu", "-"), ("back", "-")):
+        await on_settings(
+            make_callback(SettingsCb(a=action, v=value).pack(), bot=bot),
+            SettingsCb(a=action, v=value),
+            settings=get_settings(),
+        )
+    assert any(type(r).__name__ == "EditMessageText" for r in session.requests)
+
+
+async def test_links_survives_a_failing_edit(
+    env_settings: None, db: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression: links.py used raw edit_text, so a failed card edit escaped."""
+    from bot.handlers.links import on_text
+
+    session = EditHostileSession("Bad Request: message to edit not found")
+    bot = Bot(token="123456:TESTTOKEN-scaffold", session=session)
+
+    async def fake_extract(*args: Any, **kwargs: Any) -> MediaInfo:
+        return _info()
+
+    monkeypatch.setattr("bot.handlers.links.extract_media", fake_extract)
+    await on_text(make_message("https://youtu.be/dQw4w9WgXcQ", bot=bot))
+
+    async def boom(*args: Any, **kwargs: Any) -> MediaInfo:
+        raise RuntimeError("nope")
+
+    monkeypatch.setattr("bot.handlers.links.extract_media", boom)
+    await on_text(make_message("https://youtu.be/dQw4w9WgXcQ", bot=bot))
+
+
+async def test_heartbeat_survives_an_unwritable_path(tmp_path: Path) -> None:
+    """A heartbeat write error used to kill the task and resurface at shutdown."""
+    from bot.main import _heartbeat_loop
+
+    stop = asyncio.Event()
+    # A directory where the heartbeat file should be: every write fails.
+    blocked = tmp_path / "hb"
+    blocked.mkdir()
+    task = asyncio.create_task(_heartbeat_loop(str(blocked), stop))
+    await asyncio.sleep(0.05)
+    assert not task.done(), "the loop must keep running despite write errors"
+    stop.set()
+    await asyncio.wait_for(task, timeout=2)
+
+
 def test_message_helper_still_works() -> None:
     assert make_message("x").text == "x"

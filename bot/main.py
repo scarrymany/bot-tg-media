@@ -68,9 +68,19 @@ async def _heartbeat_loop(path: str | None, stop: asyncio.Event) -> None:
     from pathlib import Path
 
     heartbeat = Path(path)
-    heartbeat.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        heartbeat.parent.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        log.warning("heartbeat_dir_failed", path=str(heartbeat), error=str(exc))
+        return
     while not stop.is_set():
-        heartbeat.write_text(str(int(time.time())), encoding="utf-8")
+        # A failed write must not kill the task: an unobserved exception here
+        # would stop every later heartbeat (container goes unhealthy) and then
+        # resurface out of the shutdown path.
+        try:
+            heartbeat.write_text(str(int(time.time())), encoding="utf-8")
+        except OSError as exc:
+            log.warning("heartbeat_write_failed", path=str(heartbeat), error=str(exc))
         try:
             await asyncio.wait_for(stop.wait(), timeout=30)
         except TimeoutError:
@@ -122,7 +132,8 @@ async def run(settings: Settings | None = None) -> None:
         heartbeat_task.cancel()
         try:
             await heartbeat_task
-        except asyncio.CancelledError:
+        except (asyncio.CancelledError, Exception):
+            # Never let the heartbeat mask the reason polling stopped.
             pass
 
 

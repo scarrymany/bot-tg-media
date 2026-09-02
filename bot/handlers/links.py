@@ -7,6 +7,7 @@ from aiogram import F, Router
 from aiogram.types import Message
 
 from bot.config import get_settings
+from bot.handlers.common import safe_edit
 from bot.i18n import t
 from bot.keyboards import formats_keyboard
 from bot.services.detector import detect_links, looks_like_url
@@ -78,19 +79,19 @@ async def on_text(message: Message) -> None:
         )
     except InstagramCookiesError:
         log.info("ig_cookies_required", url=link.normalised_url)
-        await status.edit_text(t("err_ig_cookies", lang))
+        await safe_edit(status, t("err_ig_cookies", lang))
         return
     except ExtractError:
         log.warning("extract_error", url=link.normalised_url)
-        await status.edit_text(t("err_extract", lang))
+        await safe_edit(status, t("err_extract", lang))
         return
     except Exception:
         log.exception("extract_unhandled", url=link.normalised_url)
-        await status.edit_text(t("err_generic", lang))
+        await safe_edit(status, t("err_generic", lang))
         return
 
     if not any(opt.key != "audio" for opt in info.formats):
-        await status.edit_text(t("err_no_formats", lang))
+        await safe_edit(status, t("err_no_formats", lang))
         return
 
     token = put_job(info, user.user_id)
@@ -101,7 +102,7 @@ async def on_text(message: Message) -> None:
         default_quality=user.quality,
         max_mb=settings.max_file_mb,
     )
-    await status.edit_text(render_card(info, lang), reply_markup=keyboard)
+    await safe_edit(status, render_card(info, lang), reply_markup=keyboard)
 
 
 def build_router() -> Router:

@@ -5,6 +5,7 @@ from aiogram.filters import Command
 from aiogram.types import CallbackQuery, Message
 
 from bot.config import Settings, get_settings
+from bot.handlers.common import safe_edit
 from bot.i18n import t
 from bot.keyboards import (
     SettingsCb,
@@ -45,7 +46,8 @@ async def on_settings(
     if action == "qmenu":
         await callback.answer()
         if isinstance(callback.message, Message):
-            await callback.message.edit_text(
+            await safe_edit(
+                callback.message,
                 t("settings_quality_title", user.lang),
                 reply_markup=quality_keyboard(user.lang, user.quality),
             )
@@ -53,7 +55,8 @@ async def on_settings(
     if action == "lmenu":
         await callback.answer()
         if isinstance(callback.message, Message):
-            await callback.message.edit_text(
+            await safe_edit(
+                callback.message,
                 t("settings_lang_title", user.lang),
                 reply_markup=language_keyboard(user.lang, user.lang),
             )
@@ -62,7 +65,8 @@ async def on_settings(
         user = await set_quality(user_id, callback_data.v, settings.default_lang)
         await callback.answer(t("settings_saved", user.lang))
         if isinstance(callback.message, Message):
-            await callback.message.edit_text(
+            await safe_edit(
+                callback.message,
                 _settings_text(user.quality, user.lang),
                 reply_markup=settings_root_keyboard(user.lang),
             )
@@ -71,14 +75,16 @@ async def on_settings(
         user = await set_lang(user_id, callback_data.v, settings.default_lang)
         await callback.answer(t("settings_saved", user.lang))
         if isinstance(callback.message, Message):
-            await callback.message.edit_text(
+            await safe_edit(
+                callback.message,
                 _settings_text(user.quality, user.lang),
                 reply_markup=settings_root_keyboard(user.lang),
             )
         return
     await callback.answer()
     if isinstance(callback.message, Message):
-        await callback.message.edit_text(
+        await safe_edit(
+            callback.message,
             _settings_text(user.quality, user.lang),
             reply_markup=settings_root_keyboard(user.lang),
         )
