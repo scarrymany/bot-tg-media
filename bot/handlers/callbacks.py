@@ -231,7 +231,8 @@ async def _run_job(
                 job.info,
                 job.token,
                 lang=lang,
-                default_quality="auto",
+                # Same card as everywhere else: keep the user's default marked.
+                default_quality=(await get_user(user_id, settings.default_lang)).quality,
                 max_mb=settings.max_file_mb,
             ),
         )

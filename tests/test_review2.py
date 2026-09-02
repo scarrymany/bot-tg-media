@@ -508,3 +508,48 @@ def test_compose_healthcheck_is_unchanged_and_needs_no_write_access() -> None:
     # The check only reads an mtime, so it works for a non-root user too.
     assert "os.path.getmtime(p)" in compose
     assert "start_period: 40s" in compose
+
+
+# --------------------------------------------------------------------------
+# the oversize card must look like every other card
+# --------------------------------------------------------------------------
+
+
+async def test_oversize_after_download_keeps_the_default_quality_marked(
+    mocked_bot: tuple[Bot, Any], db: None
+) -> None:
+    """The retry card built after a FileTooLargeError hardcoded default_quality
+    'auto', so the user's default silently lost its checkmark."""
+    from aiogram.methods import EditMessageText
+    from bot.i18n import t
+    from bot.services.downloader import FileTooLargeError
+    from bot.storage.users import set_quality
+
+    clear_jobs()
+    await set_quality(42, "360")
+    info = _cached_info("https://vm.tiktok.com/ZMabcdef")
+    info.formats = [
+        FormatOption("360", "360p", "18", 1_000, True, False, 360, 640),
+        FormatOption("720", "720p", "play_addr", 3_000_000, True, False, 720, 720),
+    ]
+    token = put_job(info, 42)
+
+    class _TooBig:
+        async def download(self, media: Any, option: Any, **kwargs: Any) -> DownloadResult:
+            raise FileTooLargeError("bigger than advertised")
+
+        def cleanup(self, *args: Any, **kwargs: Any) -> None:
+            return None
+
+    bot, session = mocked_bot
+    await on_format(
+        make_callback(FormatCb(t=token, k="720").pack(), bot=bot),
+        FormatCb(t=token, k="720"),
+        settings=get_settings(),
+        downloader=_TooBig(),  # type: ignore[arg-type]
+        download_sem=asyncio.Semaphore(1),
+    )
+    edits = [r for r in session.requests if isinstance(r, EditMessageText)]
+    assert edits, "the card must be rewritten with the limit explanation"
+    labels = [b.text for row in edits[-1].reply_markup.inline_keyboard for b in row]
+    assert t("btn_quality_default", "ru", label="360p") in labels, labels
