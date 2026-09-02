@@ -19,6 +19,7 @@ from bot.middlewares.concurrency import ConcurrencyMiddleware
 from bot.middlewares.logging import LoggingMiddleware
 from bot.middlewares.rate_limit import RateLimitMiddleware
 from bot.services.downloader import Downloader, ffmpeg_available
+from bot.services.inflight import uploads
 from bot.storage.db import close_db, init_db
 
 log = structlog.get_logger("bot")
@@ -113,8 +114,13 @@ async def run(settings: Settings | None = None) -> None:
         stop.set()
         downloader = dp.workflow_data.get("downloader")
         if isinstance(downloader, Downloader):
-            log.info("waiting_inflight", count=downloader.in_flight)
-            await downloader.wait_idle(timeout=30)
+            log.info(
+                "waiting_inflight",
+                downloads=downloader.in_flight,
+                uploads=uploads.count,
+            )
+            if not await downloader.wait_idle(timeout=30):
+                log.warning("inflight_timeout", pending=downloader.busy)
         await close_db()
         log.info("shutdown")
         await bot.session.close()

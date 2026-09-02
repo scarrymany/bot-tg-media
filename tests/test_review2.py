@@ -237,3 +237,229 @@ async def test_instagram_missing_content_is_a_plain_extract_error(
     sending the user off to set up cookies that would not have helped."""
     error = await _ig_extract(monkeypatch, message)
     assert not isinstance(error, InstagramCookiesError)
+
+
+# --------------------------------------------------------------------------
+# graceful shutdown must wait for uploads, not only downloads
+# --------------------------------------------------------------------------
+
+
+async def test_wait_idle_waits_for_an_upload_in_flight(tmp_path: Path) -> None:
+    """SIGTERM used to cut a sendVideo in progress: only downloads were counted."""
+    from bot.config import Settings
+    from bot.services.downloader import Downloader
+    from bot.services.inflight import uploads as counter
+
+    downloader = Downloader(
+        Settings(
+            bot_token="123456:TESTTOKEN-scaffold",
+            download_dir=tmp_path / "dl",
+            db_path=tmp_path / "db" / "bot.db",
+        )
+    )
+    assert downloader.busy == 0
+    assert await downloader.wait_idle(timeout=0.2) is True
+
+    with counter:
+        assert downloader.in_flight == 0
+        assert downloader.busy == 1
+        assert await downloader.wait_idle(timeout=0.2) is False
+    assert downloader.busy == 0
+    assert await downloader.wait_idle(timeout=0.2) is True
+
+
+async def test_send_media_is_counted_while_it_runs(
+    mocked_bot: tuple[Bot, Any], tmp_path: Path
+) -> None:
+    from bot.services.downloader import DownloadResult
+    from bot.services.inflight import uploads as counter
+    from bot.services.sender import send_media
+
+    bot, session = mocked_bot
+    seen: list[int] = []
+
+    original = session.make_request
+
+    async def spy(*args: Any, **kwargs: Any) -> Any:
+        seen.append(counter.count)
+        return await original(*args, **kwargs)
+
+    session.make_request = spy  # type: ignore[method-assign]
+    path = tmp_path / "v.mp4"
+    path.write_bytes(b"media")
+    await send_media(
+        bot,
+        1,
+        DownloadResult(
+            path=path,
+            workdir=tmp_path,
+            kind="video",
+            duration=1,
+            width=2,
+            height=3,
+            title="t",
+            performer="p",
+            thumbnail=None,
+            size_bytes=5,
+        ),
+    )
+    assert seen == [1], "the upload must be counted while the request is running"
+    assert counter.count == 0, "and released afterwards"
+
+
+# --------------------------------------------------------------------------
+# a failed ffmpeg merge must not ship a silent video
+# --------------------------------------------------------------------------
+
+
+def test_looks_unmerged_recognises_ytdlp_part_names() -> None:
+    from bot.services.downloader import looks_unmerged
+
+    assert looks_unmerged(Path("video.f137.mp4")) is True
+    assert looks_unmerged(Path("video.f251.webm")) is True
+    assert looks_unmerged(Path("video.mp4")) is False
+    assert looks_unmerged(Path("my.f-clip.mp4")) is False
+
+
+def test_map_error_key_covers_a_failed_merge() -> None:
+    from bot.i18n import LANGS
+    from bot.services.downloader import MergeFailedError, map_error_key
+
+    assert map_error_key(MergeFailedError("x")) == "err_merge"
+    assert "err_merge" in LANGS["ru"]
+    assert "err_merge" in LANGS["en"]
+
+
+def _dl_settings(tmp_path: Path, max_file_mb: int = 50) -> Any:
+    from bot.config import Settings
+
+    return Settings(
+        bot_token="123456:TESTTOKEN-scaffold",
+        download_dir=tmp_path / "dl",
+        db_path=tmp_path / "db" / "bot.db",
+        max_file_mb=max_file_mb,
+    )
+
+
+def _dl_info() -> MediaInfo:
+    return MediaInfo(
+        source_url="https://youtu.be/aaaaaaaaaaa",
+        normalised_url="https://www.youtube.com/watch?v=aaaaaaaaaaa",
+        platform="youtube",
+        title="Clip",
+        duration=10,
+        thumbnail=None,
+        uploader="Author",
+        formats=[],
+        width=640,
+        height=360,
+    )
+
+
+async def test_unmerged_leftover_is_rejected_instead_of_sent_silent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """When ffmpeg fails to mux, yt-dlp leaves the video-only part behind and
+    _find_output picks it: the user used to receive a silent video."""
+    from bot.services.downloader import Downloader, MergeFailedError
+
+    settings = _dl_settings(tmp_path)
+
+    def fake_ydl(url: str, **kwargs: Any) -> None:
+        dest = Path(kwargs["outtmpl"]).parent
+        (dest / "clip.f137.mp4").write_bytes(b"video-only")
+        (dest / "clip.f140.m4a").write_bytes(b"audio")
+
+    monkeypatch.setattr("bot.services.downloader._ydl_download", fake_ydl)
+    option = FormatOption("720", "720p", "137+140", None, True, False, 720, 1280)
+    with pytest.raises(MergeFailedError):
+        await Downloader(settings).download(_dl_info(), option)
+    assert list(settings.download_dir.glob("job_*")) == [], "the workdir must be cleaned"
+
+
+async def test_merged_output_is_accepted(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from bot.services.downloader import Downloader
+
+    def fake_ydl(url: str, **kwargs: Any) -> None:
+        (Path(kwargs["outtmpl"]).parent / "clip.mp4").write_bytes(b"merged")
+
+    monkeypatch.setattr("bot.services.downloader._ydl_download", fake_ydl)
+    monkeypatch.setattr("bot.services.downloader.probe_has_audio", lambda path: True)
+    option = FormatOption("720", "720p", "137+140", None, True, False, 720, 1280)
+    result = await Downloader(_dl_settings(tmp_path)).download(_dl_info(), option)
+    assert result.path.name == "clip.mp4"
+
+
+async def test_output_without_an_audio_stream_is_rejected(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from bot.services.downloader import Downloader, MergeFailedError
+
+    def fake_ydl(url: str, **kwargs: Any) -> None:
+        (Path(kwargs["outtmpl"]).parent / "clip.mp4").write_bytes(b"merged")
+
+    monkeypatch.setattr("bot.services.downloader._ydl_download", fake_ydl)
+    monkeypatch.setattr("bot.services.downloader.probe_has_audio", lambda path: False)
+    option = FormatOption("720", "720p", "137+140", None, True, False, 720, 1280)
+    with pytest.raises(MergeFailedError):
+        await Downloader(_dl_settings(tmp_path)).download(_dl_info(), option)
+
+
+async def test_an_unprobeable_file_is_still_accepted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """ffprobe missing or unhappy must never reject a file that is actually fine."""
+    from bot.services.downloader import Downloader
+
+    def fake_ydl(url: str, **kwargs: Any) -> None:
+        (Path(kwargs["outtmpl"]).parent / "clip.mp4").write_bytes(b"merged")
+
+    monkeypatch.setattr("bot.services.downloader._ydl_download", fake_ydl)
+    monkeypatch.setattr("bot.services.downloader.probe_has_audio", lambda path: None)
+    option = FormatOption("720", "720p", "137+140", None, True, False, 720, 1280)
+    result = await Downloader(_dl_settings(tmp_path)).download(_dl_info(), option)
+    assert result.path.name == "clip.mp4"
+
+
+def test_probe_has_audio_never_raises_on_a_junk_file(tmp_path: Path) -> None:
+    from bot.services.downloader import probe_has_audio
+
+    junk = tmp_path / "junk.mp4"
+    junk.write_bytes(b"not a video")
+    assert probe_has_audio(junk) in {None, False}
+
+
+# --------------------------------------------------------------------------
+# peak temp usage: the parts together, not each part, must fit MAX_FILE_MB
+# --------------------------------------------------------------------------
+
+
+def test_progress_hook_caps_the_sum_of_the_parts() -> None:
+    """Each part used to be capped on its own, so a merged download could put
+    2 x MAX_FILE_MB into DOWNLOAD_DIR before anything complained."""
+    from bot.services.downloader import FileTooLargeError, ProgressGate, make_progress_hook
+
+    loop = asyncio.new_event_loop()
+    try:
+        hook = make_progress_hook(loop, None, None, ProgressGate(0.0), max_bytes=100)
+        hook({"status": "downloading", "downloaded_bytes": 60, "total_bytes": 60})
+        hook({"status": "finished", "total_bytes": 60})
+        # 60 already on disk + a 50-byte audio part is over the 100-byte cap.
+        with pytest.raises(FileTooLargeError):
+            hook({"status": "downloading", "downloaded_bytes": 10, "total_bytes": 50})
+    finally:
+        loop.close()
+
+
+def test_progress_hook_allows_parts_that_fit_together() -> None:
+    from bot.services.downloader import ProgressGate, make_progress_hook
+
+    loop = asyncio.new_event_loop()
+    try:
+        hook = make_progress_hook(loop, None, None, ProgressGate(0.0), max_bytes=100)
+        hook({"status": "downloading", "downloaded_bytes": 60, "total_bytes": 60})
+        hook({"status": "finished", "total_bytes": 60})
+        hook({"status": "downloading", "downloaded_bytes": 30, "total_bytes": 30})
+        hook({"status": "finished", "total_bytes": 30})
+    finally:
+        loop.close()

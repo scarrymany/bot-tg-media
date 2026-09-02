@@ -9,6 +9,7 @@ from aiogram.exceptions import TelegramBadRequest
 from aiogram.types import FSInputFile, Message
 
 from bot.services.downloader import DownloadResult
+from bot.services.inflight import uploads
 
 log = structlog.get_logger("sender")
 
@@ -27,6 +28,12 @@ def _clip(value: str | None, limit: int) -> str | None:
 
 
 async def send_media(bot: Bot, chat_id: int, result: DownloadResult) -> SendResult:
+    # Counted so shutdown waits for the upload, not just for the download.
+    with uploads:
+        return await _send_media(bot, chat_id, result)
+
+
+async def _send_media(bot: Bot, chat_id: int, result: DownloadResult) -> SendResult:
     if result.kind == "audio":
         message = await bot.send_audio(
             chat_id,
@@ -64,6 +71,22 @@ async def send_media(bot: Bot, chat_id: int, result: DownloadResult) -> SendResu
 
 
 async def send_by_file_id(
+    bot: Bot,
+    chat_id: int,
+    file_id: str,
+    kind: Literal["video", "audio"],
+    *,
+    title: str = "",
+    performer: str = "",
+    duration: int | None = None,
+) -> SendResult:
+    with uploads:
+        return await _send_by_file_id(
+            bot, chat_id, file_id, kind, title=title, performer=performer, duration=duration
+        )
+
+
+async def _send_by_file_id(
     bot: Bot,
     chat_id: int,
     file_id: str,

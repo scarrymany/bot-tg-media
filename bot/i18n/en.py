@@ -51,6 +51,10 @@ STRINGS: dict[str, str] = {
         "ffmpeg is not installed on the server — mp3 is unavailable.\n"
         "Ask the administrator to install ffmpeg, or pick a video quality."
     ),
+    "err_merge": (
+        "Could not combine the video with its audio track (the ffmpeg merge failed).\n"
+        "Try another quality."
+    ),
     "rate_limited": "Too many requests. Wait {seconds}s and try again.",
     "settings_title": "Settings\n\nDefault quality: {quality}\nLanguage: {language}",
     "settings_quality_title": "Default quality",

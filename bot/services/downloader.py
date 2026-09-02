@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import re
 import shutil
+import subprocess
 import tempfile
 import time
 from collections.abc import Awaitable, Callable
@@ -13,6 +15,7 @@ import structlog
 
 from bot.config import Settings
 from bot.services.extractor import FormatOption, MediaInfo
+from bot.services.inflight import uploads
 
 log = structlog.get_logger("downloader")
 
@@ -41,6 +44,10 @@ class FfmpegMissingError(DownloadError):
     """ffmpeg is required for this format but is not installed."""
 
 
+class MergeFailedError(DownloadError):
+    """The video and audio streams were never muxed: the file would be silent."""
+
+
 @dataclass(slots=True)
 class DownloadResult:
     path: Path
@@ -62,6 +69,8 @@ def map_error_key(exc: BaseException) -> str:
         return "err_cancelled"
     if isinstance(exc, FfmpegMissingError):
         return "err_no_ffmpeg"
+    if isinstance(exc, MergeFailedError):
+        return "err_merge"
     if isinstance(exc, DownloadError):
         return "err_download"
     return "err_generic"
@@ -69,6 +78,65 @@ def map_error_key(exc: BaseException) -> str:
 
 def ffmpeg_available() -> bool:
     return shutil.which("ffmpeg") is not None
+
+
+# yt-dlp writes each half of a to-be-merged download as "<id>.f<format_id>.<ext>"
+# and removes them once ffmpeg has muxed them into "<id>.<ext>".
+_UNMERGED_PART = re.compile(r"\.f\d+$")
+
+PROBE_TIMEOUT_SEC = 20.0
+
+
+def looks_unmerged(path: Path) -> bool:
+    """True for a leftover per-format part, i.e. a merge that never completed."""
+    return bool(_UNMERGED_PART.search(path.stem))
+
+
+def probe_has_audio(path: Path) -> bool | None:
+    """Whether the file carries an audio stream. None when it cannot be told.
+
+    Returns None whenever ffprobe is missing or unhappy, so a probe failure can
+    never reject a file that is actually fine.
+    """
+    exe = shutil.which("ffprobe")
+    if exe is None:
+        return None
+    try:
+        proc = subprocess.run(  # noqa: S603 - fixed argv, path is ours
+            [
+                exe,
+                "-v",
+                "error",
+                "-select_streams",
+                "a",
+                "-show_entries",
+                "stream=codec_type",
+                "-of",
+                "csv=p=0",
+                str(path),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=PROBE_TIMEOUT_SEC,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if proc.returncode != 0:
+        return None
+    return "audio" in proc.stdout
+
+
+def assert_playable_video(path: Path) -> None:
+    """Reject a video that lost its audio track to a failed merge.
+
+    A broken ffmpeg merge leaves the video-only part behind, and _find_output
+    happily picks it: the user then receives a silent video with no hint that
+    anything went wrong.
+    """
+    if looks_unmerged(path):
+        raise MergeFailedError(f"merge did not run, only the video part is present: {path.name}")
+    if probe_has_audio(path) is False:
+        raise MergeFailedError(f"no audio stream in {path.name}")
 
 
 class ProgressGate:
@@ -92,18 +160,29 @@ def make_progress_hook(
     max_bytes: int | None = None,
 ) -> Callable[[dict[str, Any]], None]:
     gate = gate or ProgressGate(2.0)
+    # Bytes already on disk from parts that finished (video, then audio, for a
+    # format that needs merging). Counted so the *sum* of the parts respects
+    # MAX_FILE_MB: capping each part separately let a merged download occupy
+    # twice the limit in DOWNLOAD_DIR before anything complained.
+    completed = 0
 
     def hook(status: dict[str, Any]) -> None:
+        nonlocal completed
         if cancel_event is not None and cancel_event.is_set():
             raise DownloadCancelled("cancelled")
-        if status.get("status") != "downloading":
+        state = status.get("status")
+        if state == "finished":
+            completed += int(status.get("total_bytes") or status.get("downloaded_bytes") or 0)
+            return
+        if state != "downloading":
             return
         downloaded = int(status.get("downloaded_bytes") or 0)
         total = int(status.get("total_bytes") or status.get("total_bytes_estimate") or 0)
         # Hard stop: abort as soon as the bytes on disk pass the limit so a
         # multi-GB source cannot fill DOWNLOAD_DIR before the post-hoc check.
         if max_bytes is not None and max_bytes > 0:
-            if downloaded > max_bytes or (total and total > max_bytes):
+            projected = completed + max(downloaded, total)
+            if projected > max_bytes:
                 raise FileTooLargeError("exceeds limit while downloading")
         pct = int(downloaded * 100 / total) if total else 0
         pct = min(99, max(0, pct))
@@ -225,10 +304,22 @@ class Downloader:
     def in_flight(self) -> int:
         return self._in_flight
 
-    async def wait_idle(self, timeout: float = 30.0) -> None:
+    @property
+    def busy(self) -> int:
+        """Work in progress a graceful shutdown must wait for.
+
+        Uploads count too: sending a 50 MB video to Telegram routinely takes
+        longer than fetching it, and cutting one at SIGTERM leaves the user
+        staring at a progress card that never resolves.
+        """
+        return self._in_flight + uploads.count
+
+    async def wait_idle(self, timeout: float = 30.0) -> bool:
+        """Wait for downloads and uploads to drain. False means it timed out."""
         deadline = time.monotonic() + timeout
-        while self._in_flight and time.monotonic() < deadline:
+        while self.busy and time.monotonic() < deadline:
             await asyncio.sleep(0.05)
+        return self.busy == 0
 
     def cleanup(self, result: DownloadResult | None = None, workdir: Path | None = None) -> None:
         target = result.workdir if result is not None else workdir
@@ -287,6 +378,8 @@ class Downloader:
                 ),
             )
             path = _find_output(workdir, kind)
+            if kind == "video" and option.has_audio:
+                assert_playable_video(path)
             size = path.stat().st_size
             if size > max_bytes:
                 raise FileTooLargeError("downloaded file exceeds limit")
