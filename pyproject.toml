@@ -57,3 +57,7 @@ packages = ["bot"]
 warn_unused_ignores = true
 disallow_untyped_defs = true
 check_untyped_defs = true
+
+[[tool.mypy.overrides]]
+module = ["yt_dlp", "yt_dlp.*"]
+ignore_missing_imports = true

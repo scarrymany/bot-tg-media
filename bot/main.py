@@ -17,7 +17,7 @@ from bot.handlers import setup_routers
 from bot.middlewares.concurrency import ConcurrencyMiddleware
 from bot.middlewares.logging import LoggingMiddleware
 from bot.middlewares.rate_limit import RateLimitMiddleware
-from bot.services.downloader import Downloader
+from bot.services.downloader import Downloader, ffmpeg_available
 from bot.storage.db import close_db, init_db
 
 log = structlog.get_logger("bot")
@@ -87,12 +87,22 @@ async def run(settings: Settings | None = None) -> None:
 
     async def on_startup() -> None:
         await init_db(settings.db_path)
+        cookies = settings.ig_cookies_file
+        if cookies is None:
+            log.info("ig_cookies", configured=False)
+        elif cookies.is_file():
+            log.info("ig_cookies", configured=True, path=str(cookies))
+        else:
+            log.warning("ig_cookies_missing", path=str(cookies))
+        if not ffmpeg_available():
+            log.warning("ffmpeg_missing")
         log.info("startup")
 
     async def on_shutdown() -> None:
         stop.set()
         downloader = dp.workflow_data.get("downloader")
         if isinstance(downloader, Downloader):
+            log.info("waiting_inflight", count=downloader.in_flight)
             await downloader.wait_idle(timeout=30)
         await close_db()
         log.info("shutdown")

@@ -1,0 +1,59 @@
+{
+  "run_id": "20260902-542ec4",
+  "phase": "build",
+  "seq": 3,
+  "status": "ok",
+  "branch": "grokflow/telegram-media-downloader-bot-aiogram-3-20260902-542ec4",
+  "model": "cursor-grok-4.6-xhigh-fast",
+  "commits": [
+    {
+      "sha": "b04d1b0875092e18b2cf764a83edfffa7c48eadd",
+      "message": "[grokflow build 1/5] scaffold package, config, /start /help, docker, ci"
+    },
+    {
+      "sha": "3140e14bdc23d3c1bff7a07cf3560490d8cd295d",
+      "message": "[grokflow build 2/5] detector, extractor, format card keyboard, links handler"
+    },
+    {
+      "sha": "551a7ba4d7d629318d3df9946248f3f8708e1e0b",
+      "message": "[grokflow build 3/5] downloader, sender, callbacks, cancel and error mapping"
+    },
+    {
+      "sha": "f562af1e2a43b6bb5ef4c80fd5ae99ac2d0ac937",
+      "message": "[grokflow build 4/5] sqlite cache, user settings, i18n, rate-limit, /stats"
+    },
+    {
+      "sha": "ebfab90e41effeeb73b8824de03ca9a4b3a0e35f",
+      "message": "[grokflow build 5/5] IG cookies, healthcheck, README, e2e smoke, mypy cleanup"
+    }
+  ],
+  "tests": {
+    "pytest": "89 passed",
+    "ruff_check": "ok",
+    "ruff_format": "ok",
+    "mypy_strict_bot": "ok (27 source files)"
+  },
+  "done": [
+    "Package layout per spec, pyproject [project.optional-dependencies] dev, python -m bot",
+    "aiogram 3 routers, structlog, pydantic-settings",
+    "Detector: 20+ URL fixtures (YouTube/shorts/youtu.be/m./TikTok vm/vt/t, IG reel/reels/p)",
+    "Extractor mocked yt-dlp, size flags, TikTok no-watermark preference",
+    "Download: progress gate ≤2s, ffmpeg mp3, size guard before/after, cleanup",
+    "Sender: send_video supports_streaming, send_audio title+performer",
+    "file_id cache (url_norm, format_key), user settings, /settings, /stats",
+    "i18n ru/en for all user-facing strings",
+    "Rate-limit sliding window + concurrency semaphore",
+    "IG cookies: cookiefile to yt-dlp; login/rate-limit without cookies → i18n, no crash",
+    "Heartbeat every 30s, Docker healthcheck, SIGINT/SIGTERM wait inflight + close DB",
+    "README, Dockerfile, docker-compose, CI, scripts/e2e_smoke.py"
+  ],
+  "not_done_or_not_verified": [
+    "Live Telegram e2e with a real BOT_TOKEN (acceptance 2–14): no token in this environment",
+    "docker compose up -d --build healthcheck healthy (acceptance 15): not run here (no token, docker may be unavailable)",
+    "Real yt-dlp network extract of YouTube/TikTok/Instagram (unit tests mock yt-dlp)",
+    "scripts/e2e_smoke.py getMe / E2E_EXTRACT not executed (no BOT_TOKEN)",
+    "Telethon user-account send-link path is documented only, not implemented as a client"
+  ],
+  "acceptance_unit_covered": [1, 9, 10, 12, 13, 14],
+  "acceptance_needs_live_token": [2, 3, 4, 5, 6, 7, 8, 11, 15]
+}

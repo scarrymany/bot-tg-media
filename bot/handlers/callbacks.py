@@ -4,9 +4,9 @@ import asyncio
 from html import escape
 
 import structlog
-from aiogram import Router
+from aiogram import Bot, Router
 from aiogram.exceptions import TelegramBadRequest
-from aiogram.types import CallbackQuery, Message
+from aiogram.types import CallbackQuery, InlineKeyboardMarkup, Message
 
 from bot.config import Settings, get_settings
 from bot.handlers.links import render_card
@@ -32,15 +32,28 @@ router = Router(name="callbacks")
 log = structlog.get_logger("callbacks")
 
 
-async def _safe_edit(message: Message | None, text: str, **kwargs: object) -> None:
+async def _safe_edit(
+    message: Message | None,
+    text: str,
+    reply_markup: InlineKeyboardMarkup | None = None,
+) -> None:
     if message is None:
         return
     try:
-        await message.edit_text(text, **kwargs)
+        await message.edit_text(text, reply_markup=reply_markup)
     except TelegramBadRequest as exc:
         if "not modified" in str(exc).lower():
             return
         log.warning("edit_failed", error=str(exc))
+
+
+def _bot_of(callback: CallbackQuery) -> Bot | None:
+    bot = callback.bot
+    if isinstance(bot, Bot):
+        return bot
+    if isinstance(callback.message, Message) and isinstance(callback.message.bot, Bot):
+        return callback.message.bot
+    return None
 
 
 async def _lang_for(user_id: int) -> str:
@@ -89,9 +102,12 @@ async def on_format(
         return
 
     cached = await get_cached(job.info.normalised_url, option.key)
+    bot = _bot_of(callback)
+    if bot is None:
+        return
     if cached is not None:
         await send_by_file_id(
-            callback.bot,
+            bot,
             message.chat.id,
             cached.file_id,
             cached.kind,
@@ -123,7 +139,7 @@ async def on_format(
                 progress=progress,
                 cancel_event=job.cancel_event,
             )
-        sent = await send_media(callback.bot, message.chat.id, result)
+        sent = await send_media(bot, message.chat.id, result)
         if sent.file_id:
             await put_cached(job.info.normalised_url, option.key, sent.file_id, sent.kind)
         await record_event(user_id, job.info.platform, "download")
