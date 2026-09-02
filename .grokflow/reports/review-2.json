@@ -1,0 +1,62 @@
+{
+  "source": "grokflow-review",
+  "run_id": "20260902-542ec4",
+  "pass": 2,
+  "at": "2026-09-02T08:28:27.394Z",
+  "summary": "Opus review pass 2 (verification). Re-read every review-1 diff: no regressions or spec contradictions. Closed 6 of 7 low findings: cache keyed on yt-dlp-resolved id so short links share rows; Instagram auth markers narrowed; shutdown drains in-flight uploads; failed ffmpeg merge can no longer ship a silent video (leftover-name heuristic + ffprobe when present); combined parts respect MAX_FILE_MB; Dockerfile runs as non-root app user with /data chowned before VOLUME. Also removed dead module-level Router singletons left by pass 1 and restored the default-quality checkmark on the oversize retry card. Tests 129 → 157, ruff/format/mypy --strict clean on a fresh clone. Offline-verifiable acceptance (1, 9, 10, 12, 13, 14) re-confirmed. Not verifiable locally: 2–8, 11 (BOT_TOKEN), 15 (Docker), real ffmpeg paths.",
+  "findings": [
+    {
+      "severity": "low",
+      "title": "Acceptance items 2-8, 11 and 15 remain unverified locally",
+      "details": "Need live BOT_TOKEN, Docker and ffmpeg. Items 4, 6, 7, 8, 11 touch changed code paths.",
+      "file": ".grokflow/acceptance.md"
+    },
+    {
+      "severity": "low",
+      "title": "Non-root Dockerfile change not run against a Docker daemon",
+      "details": "Ordering pinned by a test; a pre-existing root-owned bot-data volume would break writes (documented in README). Verify with docker compose up on a clean volume.",
+      "file": "Dockerfile"
+    },
+    {
+      "severity": "low",
+      "title": "Silent-video detection is best effort without ffprobe",
+      "details": "Probe failure never rejects a download by design; filename heuristic covers the main case.",
+      "file": "bot/services/downloader.py"
+    },
+    {
+      "severity": "low",
+      "title": "FileTooLargeError raised inside the yt-dlp hook may be re-wrapped as DownloadError",
+      "details": "Limit is enforced either way; only the user-facing wording could degrade to the generic error.",
+      "file": "bot/services/downloader.py"
+    },
+    {
+      "severity": "low",
+      "title": "media_cache rows written before the key change are orphaned; table has no TTL",
+      "details": "Old URL-keyed rows stay; no migration added.",
+      "file": "bot/storage/cache.py"
+    },
+    {
+      "severity": "low",
+      "title": "Peak temp usage during a merge is still ~2x the final file",
+      "details": "ffmpeg writes the merged output while both parts are on disk.",
+      "file": "bot/services/downloader.py"
+    },
+    {
+      "severity": "low",
+      "title": "TikTok no-watermark selection can only be proven with a live link",
+      "details": "Fixtures match current yt-dlp labels.",
+      "file": "bot/services/extractor.py"
+    }
+  ],
+  "fixed": [
+    "file_id cache keyed on extractor-resolved id/webpage_url (short links share a row with the canonical URL)",
+    "Instagram auth markers narrowed to real login-wall/rate-limit phrases",
+    "Graceful shutdown waits for in-flight uploads as well as downloads",
+    "Failed ffmpeg merge cannot send a silent video (unmerged leftovers rejected, ffprobe audio check when available)",
+    "Combined download parts respect MAX_FILE_MB",
+    "Dockerfile runs as unprivileged user app; /data chowned before VOLUME; healthcheck unchanged",
+    "Dead module-level Router singletons removed",
+    "Oversize retry card keeps the configured default quality marked",
+    "ffprobe runs in the executor"
+  ]
+}
