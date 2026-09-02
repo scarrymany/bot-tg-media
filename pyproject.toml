@@ -1,0 +1,59 @@
+[project]
+name = "bot-tg-media"
+version = "0.1.0"
+description = "Telegram bot for downloading TikTok / YouTube / Shorts / Instagram Reels"
+readme = "README.md"
+requires-python = ">=3.12"
+authors = [{ name = "bot-tg-media" }]
+dependencies = [
+    "aiogram>=3.13,<4",
+    "yt-dlp>=2024.8.0",
+    "aiosqlite>=0.20.0",
+    "pydantic-settings>=2.4.0",
+    "structlog>=24.4.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3.0",
+    "pytest-asyncio>=0.24.0",
+    "ruff>=0.6.0",
+    "mypy>=1.11.0",
+]
+
+[project.scripts]
+bot-tg-media = "bot.main:main"
+
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["bot*"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["tests"]
+filterwarnings = [
+    "ignore::DeprecationWarning",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["bot", "tests", "scripts"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.ruff.format]
+quote-style = "double"
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+packages = ["bot"]
+warn_unused_ignores = true
+disallow_untyped_defs = true
+check_untyped_defs = true

@@ -1,0 +1,24 @@
+services:
+  bot:
+    build: .
+    container_name: bot-tg-media
+    env_file:
+      - .env
+    environment:
+      DOWNLOAD_DIR: /data/downloads
+      DB_PATH: /data/bot.db
+      HEARTBEAT_PATH: /tmp/bot-heartbeat
+    volumes:
+      - bot-data:/data
+    restart: unless-stopped
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - python -c "import os,sys,time;p=os.environ.get('HEARTBEAT_PATH','/tmp/bot-heartbeat');sys.exit(0 if os.path.exists(p) and time.time()-os.path.getmtime(p)<90 else 1)"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 40s
+
+volumes:
+  bot-data:
