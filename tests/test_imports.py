@@ -23,11 +23,13 @@ def test_package_layout_imports() -> None:
     import bot.storage.db
     import bot.storage.users
 
-    assert start.router is not None
-    assert settings_h.router is not None
-    assert links.router is not None
-    assert callbacks.router is not None
-    assert admin.router is not None
+    # Every handler module builds a *fresh* Router on demand: a module-level
+    # singleton could only ever be attached to one Dispatcher, and registering
+    # a handler on it after setup_routers() ran would silently do nothing.
+    for module in (start, settings_h, links, callbacks, admin):
+        assert not hasattr(module, "router"), f"{module.__name__} must not keep a Router singleton"
+        first, second = module.build_router(), module.build_router()
+        assert first is not second
     assert bot.i18n.t("btn_cancel", "ru")
 
 

@@ -37,6 +37,3 @@ def build_router() -> Router:
     router = Router(name="admin")
     router.message.register(cmd_stats, Command("stats"))
     return router
-
-
-router = build_router()

@@ -96,6 +96,3 @@ def build_router() -> Router:
     router.message.register(cmd_settings, Command("settings"))
     router.callback_query.register(on_settings, SettingsCb.filter())
     return router
-
-
-router = build_router()

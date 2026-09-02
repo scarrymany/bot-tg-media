@@ -110,6 +110,3 @@ def build_router() -> Router:
     router = Router(name="links")
     router.message.register(on_text, F.text)
     return router
-
-
-router = build_router()

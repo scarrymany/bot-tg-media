@@ -295,6 +295,3 @@ def build_router() -> Router:
     router.callback_query.register(on_cancel, CancelCb.filter())
     router.callback_query.register(on_another, AnotherCb.filter())
     return router
-
-
-router = build_router()

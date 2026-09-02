@@ -32,6 +32,3 @@ def build_router() -> Router:
     router.message.register(cmd_start, CommandStart())
     router.message.register(cmd_help, Command("help"))
     return router
-
-
-router = build_router()
