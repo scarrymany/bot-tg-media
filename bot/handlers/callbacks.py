@@ -140,7 +140,9 @@ async def _try_cached(
     user_id: int,
 ) -> bool:
     """Resend from the file_id cache. False means nothing usable was cached."""
-    cached = await get_cached(job.info.normalised_url, format_key)
+    # Keyed on the extractor-resolved identity, so a short link and the
+    # canonical URL of the same video share one row.
+    cached = await get_cached(job.info.cache_key, format_key)
     if cached is None:
         return False
     try:
@@ -157,7 +159,7 @@ async def _try_cached(
         # An expired / revoked / foreign file_id must not kill the request:
         # forget it and fall through to a fresh download.
         log.warning("cache_send_failed", error=str(exc), format_key=format_key)
-        await drop_cached(job.info.normalised_url, format_key)
+        await drop_cached(job.info.cache_key, format_key)
         return False
     await record_event(user_id, job.info.platform, "cache_hit")
     log.info("sent", kind=cached.kind, cached=True)
@@ -209,7 +211,7 @@ async def _run_job(
         progress_open = False
         sent = await send_media(bot, message.chat.id, result)
         if sent.file_id:
-            await put_cached(job.info.normalised_url, option.key, sent.file_id, sent.kind)
+            await put_cached(job.info.cache_key, option.key, sent.file_id, sent.kind)
         await record_event(user_id, job.info.platform, "download")
         log.info("sent", kind=sent.kind, cached=False)
         await safe_edit(

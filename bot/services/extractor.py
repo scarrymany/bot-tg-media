@@ -7,7 +7,7 @@ from typing import Any
 
 import structlog
 
-from bot.services.detector import DetectedLink, Platform
+from bot.services.detector import DetectedLink, Platform, strip_tracking
 
 log = structlog.get_logger("extractor")
 
@@ -16,20 +16,19 @@ QUALITY_LADDER = (360, 480, 720, 1080)
 # Upper bound on a single metadata extraction, including yt-dlp's own retries.
 EXTRACT_TIMEOUT_SEC = 60.0
 
+# Only phrases yt-dlp emits for an Instagram *login wall or rate limit*.
+# Deliberately narrow: a deleted or genuinely private post must surface as a
+# plain extraction error, not as "configure IG_COOKIES_FILE".
 _IG_AUTH_MARKERS = (
     "login required",
-    "login",
-    "rate-limit",
-    "rate limit",
-    "please wait a few minutes",
-    "please wait",
-    "cookies",
-    "not available",
-    "empty media response",
-    "instagram sent an empty",
-    "requested content is not available",
+    "you need to log in",
+    "rate-limit reached",
+    "rate limit reached",
+    "please wait a few minutes before you try again",
+    "use --cookies",
+    "--cookies-from-browser",
+    "cookies are required",
     "http error 401",
-    "http error 403",
     "http error 429",
 )
 
@@ -70,6 +69,25 @@ class MediaInfo:
     formats: list[FormatOption] = field(default_factory=list)
     width: int | None = None
     height: int | None = None
+    media_id: str | None = None
+    extractor: str | None = None
+    webpage_url: str | None = None
+
+    @property
+    def cache_key(self) -> str:
+        """Identity of the media, independent of the URL shape the user sent.
+
+        ``vm.tiktok.com/ZMabc`` and ``www.tiktok.com/@user/video/123`` are the
+        same video, but they normalise to different URLs, so keying the file_id
+        cache on the typed URL gave them separate rows and a pointless second
+        download. yt-dlp resolves both to the same extractor id, so use that
+        (falling back to the resolved ``webpage_url``, then the typed URL).
+        """
+        if self.media_id:
+            return f"{(self.extractor or self.platform).lower()}:{self.media_id}"
+        if self.webpage_url:
+            return strip_tracking(self.webpage_url)
+        return self.normalised_url
 
     def format_by_key(self, key: str) -> FormatOption | None:
         for option in self.formats:
@@ -158,7 +176,31 @@ async def extract_media(
         formats=formats,
         width=info.get("width") if isinstance(info.get("width"), int) else None,
         height=info.get("height") if isinstance(info.get("height"), int) else None,
+        media_id=_resolved_id(info),
+        extractor=_resolved_extractor(info),
+        webpage_url=_resolved_webpage_url(info),
     )
+
+
+def _resolved_id(info: dict[str, Any]) -> str | None:
+    raw = info.get("id")
+    if isinstance(raw, (str, int)) and str(raw).strip():
+        return str(raw).strip()
+    return None
+
+
+def _resolved_extractor(info: dict[str, Any]) -> str | None:
+    raw = info.get("extractor_key") or info.get("extractor")
+    if isinstance(raw, str) and raw.strip():
+        return raw.strip().lower()
+    return None
+
+
+def _resolved_webpage_url(info: dict[str, Any]) -> str | None:
+    raw = info.get("webpage_url")
+    if isinstance(raw, str) and raw.strip():
+        return raw.strip()
+    return None
 
 
 def _is_video(fmt: dict[str, Any]) -> bool:
