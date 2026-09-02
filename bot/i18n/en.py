@@ -46,6 +46,11 @@ STRINGS: dict[str, str] = {
     "err_cancelled": "Download cancelled.",
     "err_generic": "Something went wrong. Please try again.",
     "err_no_formats": "No suitable formats found for this video.",
+    "err_foreign_job": "This card belongs to another user. Send your own link.",
+    "err_no_ffmpeg": (
+        "ffmpeg is not installed on the server — mp3 is unavailable.\n"
+        "Ask the administrator to install ffmpeg, or pick a video quality."
+    ),
     "rate_limited": "Too many requests. Wait {seconds}s and try again.",
     "settings_title": "Settings\n\nDefault quality: {quality}\nLanguage: {language}",
     "settings_quality_title": "Default quality",

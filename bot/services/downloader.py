@@ -20,6 +20,9 @@ ProgressCb = Callable[[int], Awaitable[None]]
 VIDEO_EXTS = {".mp4", ".mkv", ".webm", ".mov", ".m4v"}
 AUDIO_EXTS = {".mp3", ".m4a", ".opus", ".ogg", ".wav", ".aac"}
 THUMB_EXTS = {".jpg", ".jpeg", ".png", ".webp"}
+# Telegram only accepts JPEG thumbnails of at most 200 kB.
+TELEGRAM_THUMB_EXTS = {".jpg", ".jpeg"}
+TELEGRAM_THUMB_MAX_BYTES = 200 * 1024
 
 
 class DownloadError(Exception):
@@ -32,6 +35,10 @@ class FileTooLargeError(DownloadError):
 
 class DownloadCancelled(DownloadError):
     """User cancelled the job."""
+
+
+class FfmpegMissingError(DownloadError):
+    """ffmpeg is required for this format but is not installed."""
 
 
 @dataclass(slots=True)
@@ -53,6 +60,8 @@ def map_error_key(exc: BaseException) -> str:
         return "err_too_large"
     if isinstance(exc, DownloadCancelled):
         return "err_cancelled"
+    if isinstance(exc, FfmpegMissingError):
+        return "err_no_ffmpeg"
     if isinstance(exc, DownloadError):
         return "err_download"
     return "err_generic"
@@ -80,6 +89,7 @@ def make_progress_hook(
     progress: ProgressCb | None,
     cancel_event: asyncio.Event | None,
     gate: ProgressGate | None = None,
+    max_bytes: int | None = None,
 ) -> Callable[[dict[str, Any]], None]:
     gate = gate or ProgressGate(2.0)
 
@@ -90,6 +100,11 @@ def make_progress_hook(
             return
         downloaded = int(status.get("downloaded_bytes") or 0)
         total = int(status.get("total_bytes") or status.get("total_bytes_estimate") or 0)
+        # Hard stop: abort as soon as the bytes on disk pass the limit so a
+        # multi-GB source cannot fill DOWNLOAD_DIR before the post-hoc check.
+        if max_bytes is not None and max_bytes > 0:
+            if downloaded > max_bytes or (total and total > max_bytes):
+                raise FileTooLargeError("exceeds limit while downloading")
         pct = int(downloaded * 100 / total) if total else 0
         pct = min(99, max(0, pct))
         if not gate.allow() or progress is None:
@@ -114,9 +129,11 @@ def _ydl_download(
     is_audio: bool,
     cookiefile: str | None,
     progress_hooks: list[Callable[[dict[str, Any]], None]],
+    max_filesize: int | None = None,
 ) -> None:
     import yt_dlp
 
+    has_ffmpeg = ffmpeg_available()
     opts: dict[str, Any] = {
         "format": format_selector,
         "outtmpl": outtmpl,
@@ -131,15 +148,26 @@ def _ydl_download(
         "restrictfilenames": True,
         "writethumbnail": True,
     }
+    if max_filesize:
+        # Second line of defence: yt-dlp refuses formats it knows are oversized.
+        opts["max_filesize"] = max_filesize
+    postprocessors: list[dict[str, Any]] = []
     if is_audio:
         opts["format"] = "bestaudio/best"
-        opts["postprocessors"] = [
+        postprocessors.append(
             {
                 "key": "FFmpegExtractAudio",
                 "preferredcodec": "mp3",
                 "preferredquality": "192",
             }
-        ]
+        )
+    elif has_ffmpeg:
+        # YouTube serves .webp thumbnails; Telegram only accepts JPEG.
+        postprocessors.append(
+            {"key": "FFmpegThumbnailsConvertor", "format": "jpg", "when": "before_dl"}
+        )
+    if postprocessors:
+        opts["postprocessors"] = postprocessors
     if cookiefile:
         opts["cookiefile"] = cookiefile
     with yt_dlp.YoutubeDL(opts) as ydl:
@@ -162,8 +190,20 @@ def _find_output(workdir: Path, kind: Literal["video", "audio"]) -> Path:
 
 
 def _find_thumb(workdir: Path) -> Path | None:
-    thumbs = [p for p in workdir.iterdir() if p.is_file() and p.suffix.lower() in THUMB_EXTS]
-    return thumbs[0] if thumbs else None
+    """Return a thumbnail Telegram will actually accept, or None.
+
+    Telegram requires JPEG under 200 kB; a .webp (what YouTube serves) or an
+    oversized file makes sendVideo fail with a BadRequest, so drop those.
+    """
+    for path in sorted(workdir.iterdir()):
+        if not path.is_file() or path.suffix.lower() not in TELEGRAM_THUMB_EXTS:
+            continue
+        try:
+            if path.stat().st_size <= TELEGRAM_THUMB_MAX_BYTES:
+                return path
+        except OSError:  # pragma: no cover - race with cleanup
+            continue
+    return None
 
 
 def cleanup_dir(workdir: Path | None) -> None:
@@ -207,11 +247,20 @@ class Downloader:
             option.est_size_bytes is not None and option.est_size_bytes > max_bytes
         ):
             raise FileTooLargeError("estimated size exceeds limit")
-        if option.key == "audio" and not ffmpeg_available():
-            raise DownloadError("ffmpeg is required for mp3 extraction")
+        has_ffmpeg = ffmpeg_available()
+        if option.key == "audio" and not has_ffmpeg:
+            raise FfmpegMissingError("ffmpeg is required for mp3 extraction")
 
         if cancel_event is not None and cancel_event.is_set():
             raise DownloadCancelled("cancelled")
+
+        selector = option.format_selector
+        if not has_ffmpeg and "+" in selector:
+            # Without ffmpeg the video+audio merge cannot run; fall back to a
+            # progressive (already muxed) stream instead of failing outright.
+            height = option.height or 720
+            selector = f"best[height<={height}][acodec!=none][vcodec!=none]/best"
+            log.warning("ffmpeg_missing_fallback", selector=selector)
 
         self.settings.download_dir.mkdir(parents=True, exist_ok=True)
         workdir = Path(tempfile.mkdtemp(prefix="job_", dir=str(self.settings.download_dir)))
@@ -219,7 +268,7 @@ class Downloader:
         self._in_flight += 1
         try:
             loop = asyncio.get_running_loop()
-            hook = make_progress_hook(loop, progress, cancel_event)
+            hook = make_progress_hook(loop, progress, cancel_event, max_bytes=max_bytes)
             cookiefile = None
             cookies = self.settings.ig_cookies_file
             if cookies is not None and cookies.is_file():
@@ -229,11 +278,12 @@ class Downloader:
                 None,
                 lambda: _ydl_download(
                     info.normalised_url,
-                    format_selector=option.format_selector,
+                    format_selector=selector,
                     outtmpl=outtmpl,
                     is_audio=kind == "audio",
                     cookiefile=cookiefile,
                     progress_hooks=[hook],
+                    max_filesize=max_bytes,
                 ),
             )
             path = _find_output(workdir, kind)

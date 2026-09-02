@@ -20,6 +20,7 @@ class Job:
     user_id: int
     created_at: float = field(default_factory=monotonic)
     cancelled: bool = False
+    busy: bool = False
     cancel_event: asyncio.Event = field(default_factory=asyncio.Event)
 
 
@@ -59,6 +60,26 @@ def drop_job(token: str) -> None:
     _JOBS.pop(token, None)
 
 
+def try_start_job(token: str) -> bool:
+    """Claim a job for a download. Returns False when one is already running.
+
+    Guards against a double tap on a quality button starting the same download
+    twice (the callback is answered immediately, so Telegram lets the user tap
+    again while the first job is still in flight).
+    """
+    job = _JOBS.get(token)
+    if job is None or job.busy:
+        return False
+    job.busy = True
+    return True
+
+
+def finish_job(token: str) -> None:
+    job = _JOBS.get(token)
+    if job is not None:
+        job.busy = False
+
+
 def clear_jobs() -> None:
     _JOBS.clear()
 
@@ -85,6 +106,18 @@ async def get_cached(url_norm: str, format_key: str) -> CacheEntry | None:
     if kind not in {"video", "audio"}:
         return None
     return CacheEntry(file_id=str(row["file_id"]), kind=kind, created_at=int(row["created_at"]))
+
+
+async def drop_cached(url_norm: str, format_key: str) -> None:
+    """Forget a cached file_id (e.g. Telegram rejected it as expired/invalid)."""
+    conn = get_db_or_none()
+    if conn is None:
+        return
+    await conn.execute(
+        "DELETE FROM media_cache WHERE url_norm = ? AND format_key = ?",
+        (url_norm, format_key),
+    )
+    await conn.commit()
 
 
 async def put_cached(

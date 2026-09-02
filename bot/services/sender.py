@@ -5,6 +5,7 @@ from typing import Literal
 
 import structlog
 from aiogram import Bot
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.types import FSInputFile, Message
 
 from bot.services.downloader import DownloadResult
@@ -37,16 +38,27 @@ async def send_media(bot: Bot, chat_id: int, result: DownloadResult) -> SendResu
         file_id = _audio_file_id(message)
     else:
         thumb = FSInputFile(result.thumbnail) if result.thumbnail else None
-        message = await bot.send_video(
-            chat_id,
-            video=FSInputFile(result.path),
-            duration=result.duration,
-            width=result.width,
-            height=result.height,
-            supports_streaming=True,
-            thumbnail=thumb,
-            caption=_clip(result.title, 1024),
-        )
+
+        async def _send(with_thumb: bool) -> Message:
+            return await bot.send_video(
+                chat_id,
+                video=FSInputFile(result.path),
+                duration=result.duration,
+                width=result.width,
+                height=result.height,
+                supports_streaming=True,
+                thumbnail=thumb if with_thumb else None,
+                caption=_clip(result.title, 1024),
+            )
+
+        try:
+            message = await _send(thumb is not None)
+        except TelegramBadRequest as exc:
+            if thumb is None:
+                raise
+            # A thumbnail Telegram dislikes must not cost us the whole upload.
+            log.warning("send_video_thumb_rejected", error=str(exc))
+            message = await _send(False)
         file_id = _video_file_id(message)
     return SendResult(file_id=file_id, kind=result.kind, message_id=message.message_id)
 
