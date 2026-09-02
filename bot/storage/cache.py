@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import secrets
 from dataclasses import dataclass, field
 from time import monotonic
@@ -16,6 +17,7 @@ class Job:
     user_id: int
     created_at: float = field(default_factory=monotonic)
     cancelled: bool = False
+    cancel_event: asyncio.Event = field(default_factory=asyncio.Event)
 
 
 _JOBS: dict[str, Job] = {}
@@ -46,6 +48,7 @@ def cancel_job(token: str) -> Job | None:
     job = get_job(token)
     if job is not None:
         job.cancelled = True
+        job.cancel_event.set()
     return job
 
 

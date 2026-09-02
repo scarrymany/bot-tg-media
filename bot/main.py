@@ -17,6 +17,7 @@ from bot.handlers import setup_routers
 from bot.middlewares.concurrency import ConcurrencyMiddleware
 from bot.middlewares.logging import LoggingMiddleware
 from bot.middlewares.rate_limit import RateLimitMiddleware
+from bot.services.downloader import Downloader
 
 log = structlog.get_logger("bot")
 
@@ -52,6 +53,7 @@ def create_bot(settings: Settings) -> Bot:
 def create_dispatcher(settings: Settings) -> Dispatcher:
     dp = Dispatcher()
     dp["settings"] = settings
+    dp["downloader"] = Downloader(settings)
     dp.update.outer_middleware(LoggingMiddleware())
     dp.update.outer_middleware(RateLimitMiddleware())
     dp.update.outer_middleware(ConcurrencyMiddleware(settings.max_concurrent_downloads))

@@ -8,7 +8,7 @@ import pytest
 from aiogram import Bot
 from aiogram.client.session.base import BaseSession
 from aiogram.methods import TelegramMethod
-from aiogram.types import Chat, Message, User
+from aiogram.types import Audio, CallbackQuery, Chat, Message, User, Video
 from bot.config import reset_settings_cache
 
 
@@ -36,7 +36,32 @@ class MockedSession(BaseSession):
         method_name = getattr(method, "__api_method__", type(method).__name__)
         chat_id = getattr(method, "chat_id", 1)
         text = getattr(method, "text", None) or getattr(method, "caption", None)
-        if method_name in {"sendMessage", "editMessageText", "sendVideo", "sendAudio"}:
+        if method_name == "sendVideo":
+            return Message(
+                message_id=len(self.requests) + 10,
+                date=datetime.now(UTC),
+                chat=Chat(id=int(chat_id) if chat_id is not None else 1, type="private"),
+                caption=text,
+                video=Video(
+                    file_id="vid-file-id",
+                    file_unique_id="vid-uniq",
+                    width=640,
+                    height=360,
+                    duration=1,
+                ),
+            ).as_(bot)
+        if method_name == "sendAudio":
+            return Message(
+                message_id=len(self.requests) + 10,
+                date=datetime.now(UTC),
+                chat=Chat(id=int(chat_id) if chat_id is not None else 1, type="private"),
+                audio=Audio(
+                    file_id="aud-file-id",
+                    file_unique_id="aud-uniq",
+                    duration=1,
+                ),
+            ).as_(bot)
+        if method_name in {"sendMessage", "editMessageText"}:
             return Message(
                 message_id=len(self.requests) + 10,
                 date=datetime.now(UTC),
@@ -83,3 +108,20 @@ def make_message(
     if bot is not None:
         return msg.as_(bot)
     return msg
+
+
+def make_callback(
+    data: str,
+    *,
+    bot: Bot,
+    user_id: int = 42,
+    message: Message | None = None,
+) -> CallbackQuery:
+    card = message or make_message("card", user_id=user_id, bot=bot)
+    return CallbackQuery(
+        id="cb1",
+        from_user=User(id=user_id, is_bot=False, first_name="Test"),
+        chat_instance="ci",
+        message=card,
+        data=data,
+    ).as_(bot)

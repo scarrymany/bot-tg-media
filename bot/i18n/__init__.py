@@ -8,9 +8,14 @@ LANGS: dict[str, dict[str, str]] = {
 }
 
 
+class _SafeDict(dict[str, object]):
+    def __missing__(self, key: str) -> str:
+        return "{" + key + "}"
+
+
 def t(key: str, lang: str = "ru", **kwargs: object) -> str:
     table = LANGS.get(lang, LANGS["ru"])
     template = table.get(key) or LANGS["ru"].get(key) or key
     if kwargs:
-        return template.format(**kwargs)
+        return template.format_map(_SafeDict(kwargs))
     return template
