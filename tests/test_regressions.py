@@ -572,5 +572,26 @@ async def test_heartbeat_survives_an_unwritable_path(tmp_path: Path) -> None:
     await asyncio.wait_for(task, timeout=2)
 
 
+def test_bad_token_exits_cleanly(
+    env_settings: None, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A wrong BOT_TOKEN is the commonest startup failure; it printed a raw
+    aiogram traceback instead of telling the operator what to fix."""
+    from aiogram.exceptions import TelegramUnauthorizedError
+    from aiogram.methods import GetMe
+    from bot import main as main_mod
+
+    async def unauthorized(*args: Any, **kwargs: Any) -> None:
+        raise TelegramUnauthorizedError(method=GetMe(), message="Unauthorized")
+
+    monkeypatch.setattr(main_mod, "run", unauthorized)
+    with pytest.raises(SystemExit) as excinfo:
+        main_mod.main()
+    assert excinfo.value.code == 2
+    err = capsys.readouterr().err
+    assert "BOT_TOKEN" in err
+    assert "Traceback" not in err
+
+
 def test_message_helper_still_works() -> None:
     assert make_message("x").text == "x"

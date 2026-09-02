@@ -10,6 +10,7 @@ import structlog
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
+from aiogram.exceptions import TelegramUnauthorizedError
 from pydantic import ValidationError
 
 from bot.config import Settings, get_settings
@@ -145,7 +146,17 @@ def main() -> None:
             f"Invalid configuration. Copy .env.example to .env and set BOT_TOKEN.\n{exc}\n"
         )
         raise SystemExit(2) from exc
-    asyncio.run(run(settings))
+    try:
+        asyncio.run(run(settings))
+    except TelegramUnauthorizedError as exc:
+        # By far the most common startup failure; a traceback helps nobody.
+        sys.stderr.write(
+            "Telegram rejected BOT_TOKEN (Unauthorized). Check the value in .env "
+            "against the token @BotFather issued.\n"
+        )
+        raise SystemExit(2) from exc
+    except KeyboardInterrupt:  # pragma: no cover - interactive only
+        pass
 
 
 if __name__ == "__main__":
