@@ -13,6 +13,9 @@ log = structlog.get_logger("extractor")
 
 QUALITY_LADDER = (360, 480, 720, 1080)
 
+# Upper bound on a single metadata extraction, including yt-dlp's own retries.
+EXTRACT_TIMEOUT_SEC = 60.0
+
 _IG_AUTH_MARKERS = (
     "login required",
     "login",
@@ -115,7 +118,15 @@ async def extract_media(
     cookies_set = "cookiefile" in opts
     loop = asyncio.get_running_loop()
     try:
-        info = await loop.run_in_executor(None, _ydl_extract, link.normalised_url, opts)
+        # socket_timeout only bounds individual reads; without an overall
+        # deadline a wedged extractor leaves the "fetching info" card forever.
+        info = await asyncio.wait_for(
+            loop.run_in_executor(None, _ydl_extract, link.normalised_url, opts),
+            timeout=EXTRACT_TIMEOUT_SEC,
+        )
+    except TimeoutError as exc:
+        log.warning("extract_timeout", url=link.normalised_url, seconds=EXTRACT_TIMEOUT_SEC)
+        raise ExtractError(f"extract timed out after {EXTRACT_TIMEOUT_SEC}s") from exc
     except Exception as exc:
         log.warning("extract_failed", url=link.normalised_url, error=str(exc))
         if link.platform == "instagram_reels" and _is_ig_auth_error(str(exc)) and not cookies_set:

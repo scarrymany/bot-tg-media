@@ -221,6 +221,23 @@ async def test_instagram_error_with_cookies_is_extract(
     assert not isinstance(exc.value, InstagramCookiesError)
 
 
+async def test_extract_times_out(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A wedged extractor must surface an error instead of leaving the
+    "fetching info" card in place forever."""
+    import time as _time
+
+    import bot.services.extractor as extractor_mod
+
+    monkeypatch.setattr(extractor_mod, "EXTRACT_TIMEOUT_SEC", 0.05)
+    monkeypatch.setattr(
+        "bot.services.extractor._ydl_extract",
+        lambda url, opts: (_time.sleep(2), {})[1],
+    )
+    link = DetectedLink("x", "https://www.youtube.com/watch?v=dQw4w9WgXcQ", "youtube")
+    with pytest.raises(ExtractError, match="timed out"):
+        await extract_media(link, max_file_mb=50)
+
+
 async def test_generic_extract_error(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         "bot.services.extractor._ydl_extract",
