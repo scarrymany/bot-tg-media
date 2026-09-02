@@ -23,7 +23,7 @@
       "message": "[grokflow build 4/5] sqlite cache, user settings, i18n, rate-limit, /stats"
     },
     {
-      "sha": "ebfab90e41effeeb73b8824de03ca9a4b3a0e35f",
+      "sha": "4f88f3a6b5309f7eee8bf1510e1d132212c403a7",
       "message": "[grokflow build 5/5] IG cookies, healthcheck, README, e2e smoke, mypy cleanup"
     }
   ],
