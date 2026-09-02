@@ -19,7 +19,6 @@ from bot.services.extractor import (
 from bot.storage.cache import put_job
 from bot.storage.users import get_user
 
-router = Router(name="links")
 log = structlog.get_logger("links")
 
 PLATFORM_EMOJI = {
@@ -53,7 +52,6 @@ def render_card(info: MediaInfo, lang: str) -> str:
     )
 
 
-@router.message(F.text)
 async def on_text(message: Message) -> None:
     text = message.text or ""
     if text.startswith("/"):
@@ -104,3 +102,13 @@ async def on_text(message: Message) -> None:
         max_mb=settings.max_file_mb,
     )
     await status.edit_text(render_card(info, lang), reply_markup=keyboard)
+
+
+def build_router() -> Router:
+    """Build a fresh router so a Dispatcher can be constructed more than once."""
+    router = Router(name="links")
+    router.message.register(on_text, F.text)
+    return router
+
+
+router = build_router()

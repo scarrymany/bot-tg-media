@@ -8,10 +8,7 @@ from bot.config import Settings
 from bot.i18n import t
 from bot.storage.users import get_stats, get_user
 
-router = Router(name="admin")
 
-
-@router.message(Command("stats"))
 async def cmd_stats(message: Message, settings: Settings) -> None:
     user_id = message.from_user.id if message.from_user else 0
     user = await get_user(user_id, settings.default_lang)
@@ -33,3 +30,13 @@ async def cmd_stats(message: Message, settings: Settings) -> None:
             hit_rate=stats.hit_rate,
         )
     )
+
+
+def build_router() -> Router:
+    """Build a fresh router so a Dispatcher can be constructed more than once."""
+    router = Router(name="admin")
+    router.message.register(cmd_stats, Command("stats"))
+    return router
+
+
+router = build_router()

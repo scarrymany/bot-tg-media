@@ -8,8 +8,6 @@ from bot.config import get_settings
 from bot.i18n import t
 from bot.storage.users import get_user
 
-router = Router(name="start")
-
 
 async def _lang(message: Message) -> str:
     settings = get_settings()
@@ -18,13 +16,22 @@ async def _lang(message: Message) -> str:
     return user.lang
 
 
-@router.message(CommandStart())
 async def cmd_start(message: Message) -> None:
     await message.answer(t("start_greeting", await _lang(message)))
 
 
-@router.message(Command("help"))
 async def cmd_help(message: Message) -> None:
     await message.answer(
         t("help_text", await _lang(message), max_mb=get_settings().max_file_mb),
     )
+
+
+def build_router() -> Router:
+    """Build a fresh router so a Dispatcher can be constructed more than once."""
+    router = Router(name="start")
+    router.message.register(cmd_start, CommandStart())
+    router.message.register(cmd_help, Command("help"))
+    return router
+
+
+router = build_router()

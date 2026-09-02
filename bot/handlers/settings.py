@@ -14,8 +14,6 @@ from bot.keyboards import (
 )
 from bot.storage.users import get_user, set_lang, set_quality
 
-router = Router(name="settings")
-
 
 def _settings_text(quality: str, lang: str) -> str:
     return t(
@@ -26,7 +24,6 @@ def _settings_text(quality: str, lang: str) -> str:
     )
 
 
-@router.message(Command("settings"))
 async def cmd_settings(message: Message) -> None:
     settings = get_settings()
     user_id = message.from_user.id if message.from_user else 0
@@ -37,7 +34,6 @@ async def cmd_settings(message: Message) -> None:
     )
 
 
-@router.callback_query(SettingsCb.filter())
 async def on_settings(
     callback: CallbackQuery,
     callback_data: SettingsCb,
@@ -86,3 +82,14 @@ async def on_settings(
             _settings_text(user.quality, user.lang),
             reply_markup=settings_root_keyboard(user.lang),
         )
+
+
+def build_router() -> Router:
+    """Build a fresh router so a Dispatcher can be constructed more than once."""
+    router = Router(name="settings")
+    router.message.register(cmd_settings, Command("settings"))
+    router.callback_query.register(on_settings, SettingsCb.filter())
+    return router
+
+
+router = build_router()

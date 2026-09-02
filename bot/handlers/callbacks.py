@@ -38,7 +38,6 @@ from bot.storage.cache import (
 )
 from bot.storage.users import get_user, record_event
 
-router = Router(name="callbacks")
 log = structlog.get_logger("callbacks")
 
 
@@ -83,7 +82,6 @@ async def _reject_foreign(callback: CallbackQuery, user_id: int) -> None:
     await callback.answer(t("err_foreign_job", await _lang_for(user_id)), show_alert=True)
 
 
-@router.callback_query(FormatCb.filter())
 async def on_format(
     callback: CallbackQuery,
     callback_data: FormatCb,
@@ -261,7 +259,6 @@ async def _run_job(
             downloader.cleanup(result)
 
 
-@router.callback_query(CancelCb.filter())
 async def on_cancel(callback: CallbackQuery, callback_data: CancelCb) -> None:
     user_id = callback.from_user.id if callback.from_user else 0
     job = get_job(callback_data.t)
@@ -275,7 +272,6 @@ async def on_cancel(callback: CallbackQuery, callback_data: CancelCb) -> None:
     await _safe_edit(message, t("cancelled", lang))
 
 
-@router.callback_query(AnotherCb.filter())
 async def on_another(
     callback: CallbackQuery,
     callback_data: AnotherCb,
@@ -304,3 +300,15 @@ async def on_another(
             max_mb=settings.max_file_mb,
         ),
     )
+
+
+def build_router() -> Router:
+    """Build a fresh router so a Dispatcher can be constructed more than once."""
+    router = Router(name="callbacks")
+    router.callback_query.register(on_format, FormatCb.filter())
+    router.callback_query.register(on_cancel, CancelCb.filter())
+    router.callback_query.register(on_another, AnotherCb.filter())
+    return router
+
+
+router = build_router()
